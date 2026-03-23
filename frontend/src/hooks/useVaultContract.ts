@@ -11,14 +11,12 @@ import {
 import { signTransaction } from '@stellar/freighter-api';
 import { useWallet } from '../context/WalletContextProps';
 import { parseError } from '../utils/errorParser';
+import { env } from '../config/env';
 import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';
 
-const CONTRACT_ID = "CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
-const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
-const RPC_URL = "https://soroban-testnet.stellar.org";
 const EVENTS_PAGE_SIZE = 20;
 
-const server = new SorobanRpc.Server(RPC_URL);
+const server = new SorobanRpc.Server(env.sorobanRpcUrl);
 
 interface StellarBalance {
     asset_type: string;
@@ -111,7 +109,7 @@ export const useVaultContract = () => {
 
     const getDashboardStats = useCallback(async () => {
         try {
-            const accountInfo = await server.getAccount(CONTRACT_ID) as unknown as { balances: StellarBalance[] };
+            const accountInfo = await server.getAccount(env.contractId) as unknown as { balances: StellarBalance[] };
             const nativeBalance = accountInfo.balances.find((b: StellarBalance) => b.asset_type === 'native');
             const balance = nativeBalance ? parseFloat(nativeBalance.balance).toLocaleString() : "0";
 
@@ -142,12 +140,12 @@ export const useVaultContract = () => {
         try {
             const account = await server.getAccount(address);
             const tx = new TransactionBuilder(account, { fee: "100" })
-                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setNetworkPassphrase(env.networkPassphrase)
                 .setTimeout(30)
                 .addOperation(Operation.invokeHostFunction({
                     func: xdr.HostFunction.hostFunctionTypeInvokeContract(
                         new xdr.InvokeContractArgs({
-                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            contractAddress: Address.fromString(env.contractId).toScAddress(),
                             functionName: "propose_transfer",
                             args: [
                                 new Address(address).toScVal(),
@@ -165,8 +163,8 @@ export const useVaultContract = () => {
             const simulation = await server.simulateTransaction(tx);
             if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
             const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
-            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
-            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: env.stellarNetwork });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, env.networkPassphrase));
             return response.hash;
         } catch (e: unknown) {
             throw parseError(e);
@@ -181,12 +179,12 @@ export const useVaultContract = () => {
         try {
             const account = await server.getAccount(address);
             const tx = new TransactionBuilder(account, { fee: "100" })
-                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setNetworkPassphrase(env.networkPassphrase)
                 .setTimeout(30)
                 .addOperation(Operation.invokeHostFunction({
                     func: xdr.HostFunction.hostFunctionTypeInvokeContract(
                         new xdr.InvokeContractArgs({
-                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            contractAddress: Address.fromString(env.contractId).toScAddress(),
                             functionName: "reject_proposal",
                             args: [
                                 new Address(address).toScVal(),
@@ -201,8 +199,8 @@ export const useVaultContract = () => {
             const simulation = await server.simulateTransaction(tx);
             if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
             const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
-            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
-            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: env.stellarNetwork });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, env.networkPassphrase));
             return response.hash;
         } catch (e: unknown) {
             throw parseError(e);
@@ -223,12 +221,12 @@ export const useVaultContract = () => {
 
             // 2. Build Transaction
             const tx = new TransactionBuilder(account, { fee: "100" })
-                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setNetworkPassphrase(env.networkPassphrase)
                 .setTimeout(30)
                 .addOperation(Operation.invokeHostFunction({
                     func: xdr.HostFunction.hostFunctionTypeInvokeContract(
                         new xdr.InvokeContractArgs({
-                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            contractAddress: Address.fromString(env.contractId).toScAddress(),
                             functionName: "execute_proposal",
                             args: [
                                 new Address(address).toScVal(),
@@ -251,12 +249,12 @@ export const useVaultContract = () => {
 
             // 4. Sign with Freighter
             const signedXdr = await signTransaction(preparedTx.toXDR(), {
-                network: "TESTNET",
+                network: env.stellarNetwork,
             });
 
             // 5. Submit Transaction
             const response = await server.sendTransaction(
-                TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE)
+                TransactionBuilder.fromXDR(signedXdr as string, env.networkPassphrase)
             );
 
             if (response.status !== "PENDING") {
@@ -278,7 +276,7 @@ export const useVaultContract = () => {
         limit: number = EVENTS_PAGE_SIZE
     ): Promise<GetVaultEventsResult> => {
         try {
-            const latestLedgerRes = await fetch(RPC_URL, {
+            const latestLedgerRes = await fetch(env.sorobanRpcUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getLatestLedger' }),
@@ -288,13 +286,13 @@ export const useVaultContract = () => {
             const startLedger = cursor ? undefined : Math.max(1, parseInt(latestLedger, 10) - 50000);
 
             const params: Record<string, unknown> = {
-                filters: [{ type: 'contract', contractIds: [CONTRACT_ID] }],
+                filters: [{ type: 'contract', contractIds: [env.contractId] }],
                 pagination: { limit: Math.min(limit, 200) },
             };
             if (!cursor) params.startLedger = String(startLedger);
             else params.pagination = { ...(params.pagination as object), cursor };
 
-            const res = await fetch(RPC_URL, {
+            const res = await fetch(env.sorobanRpcUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'getEvents', params }),
