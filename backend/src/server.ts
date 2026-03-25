@@ -1,32 +1,32 @@
-import { createServer } from "node:http";
-
 import type { BackendEnv } from "./config/env.js";
-import { buildHealthResponse, buildStatusResponse } from "./routes/health.js";
+import { loadEnv } from "./config/env.js";
+import { createApp } from "./app.js";
+import { EventPollingService, FileCursorAdapter } from "./modules/events/index.js";
 
-export function createAppServer(env: BackendEnv) {
-  return createServer((request, response) => {
-    const url = new URL(
-      request.url || "/",
-      `http://${request.headers.host || "localhost"}`,
+export interface BackendRuntime {
+  readonly startedAt: string;
+  readonly eventPollingService: EventPollingService;
+}
+
+export function startServer(env: BackendEnv = loadEnv()) {
+  const runtime: BackendRuntime = {
+    startedAt: new Date().toISOString(),
+    eventPollingService: new EventPollingService(
+      env,
+      new FileCursorAdapter(),
+    ),
+  };
+  
+  // Start background services
+  void runtime.eventPollingService.start();
+
+  const app = createApp(env, runtime);
+
+  const server = app.listen(env.port, env.host, () => {
+    console.log(
+      `[vaultdao-backend] listening on http://${env.host}:${env.port} for ${env.stellarNetwork}`,
     );
-
-    response.setHeader("Content-Type", "application/json; charset=utf-8");
-
-    if (request.method === "GET" && url.pathname === "/health") {
-      const payload = buildHealthResponse(env);
-      response.writeHead(payload.statusCode);
-      response.end(payload.body);
-      return;
-    }
-
-    if (request.method === "GET" && url.pathname === "/api/v1/status") {
-      const payload = buildStatusResponse(env);
-      response.writeHead(payload.statusCode);
-      response.end(payload.body);
-      return;
-    }
-
-    response.writeHead(404);
-    response.end(JSON.stringify({ ok: false, error: "Not Found" }));
   });
+
+  return server;
 }

@@ -12,6 +12,8 @@
 #![allow(clippy::let_unit_value)]
 
 // mod bridge; // Feature incomplete
+#[cfg(feature = "bridge")]
+mod bridge;
 mod errors;
 mod events;
 mod storage;
@@ -53,10 +55,6 @@ const MAX_BATCH_SIZE: u32 = 10;
 /// Maximum metadata entries stored per proposal
 const MAX_METADATA_ENTRIES: u32 = 16;
 
-/// Maximum actions in a cross-vault proposal (unused - feature not implemented)
-#[allow(dead_code)]
-const MAX_CROSS_VAULT_ACTIONS: u32 = 5;
-
 /// Maximum length for a single metadata value
 const MAX_METADATA_VALUE_LEN: u32 = 256;
 
@@ -89,6 +87,8 @@ fn calculate_expiration_ledger(config: &Config, priority: &Priority, current_led
     current_ledger + configured.saturating_mul(multiplier)
 }
 
+#[cfg(test)]
+mod test;
 #[cfg(test)]
 mod test_audit;
 #[cfg(test)]
@@ -813,9 +813,20 @@ impl VaultDAO {
             return Err(VaultError::VoterNotInSnapshot);
         }
 
+        // Resolve delegation chain to get effective voter
+        let effective_voter = Self::resolve_delegation_chain(&env, &signer, 0);
+        let is_delegated = effective_voter != signer;
+
         // Validate state
         if proposal.status != ProposalStatus::Pending {
             return Err(VaultError::ProposalNotPending);
+        }
+
+        // Prevent double-approval or abstaining then approving (check effective voter)
+        if proposal.approvals.contains(&effective_voter)
+            || proposal.abstentions.contains(&effective_voter)
+        {
+            return Err(VaultError::AlreadyApproved);
         }
 
         // Check expiration (only if expiration is enabled, i.e., expires_at > 0)
@@ -837,23 +848,10 @@ impl VaultDAO {
             return Err(VaultError::VotingDeadlinePassed);
         }
 
-        // Resolve delegation chain to get effective voter
-        let effective_voter = Self::resolve_delegation_chain(&env, &signer, 0);
-        let is_delegated = effective_voter != signer;
-
-        // Prevent double-approval or abstaining then approving (check effective voter)
-        if proposal.approvals.contains(&effective_voter)
-            || proposal.abstentions.contains(&effective_voter)
-        {
-            return Err(VaultError::AlreadyApproved);
-        }
-
-        // Add approval
-        proposal.approvals.push_back(signer.clone());
-        let current_ledger = env.ledger().sequence() as u64;
-        storage::set_approval_ledger(&env, proposal_id, &signer, current_ledger);
         // Add approval using effective voter
         proposal.approvals.push_back(effective_voter.clone());
+        let current_ledger = env.ledger().sequence() as u64;
+        storage::set_approval_ledger(&env, proposal_id, &signer, current_ledger);
 
         // Emit delegated vote event if voting through delegation
         if is_delegated {
@@ -920,6 +918,130 @@ impl VaultDAO {
 
         Ok(())
     }
+
+    /// Abstain from a pending proposal explicitly.
+    ///
+    /// The signer's vote counts towards the quorum but does not contribute
+    /// to the total approvals required to meet the threshold.
+    ///
+    /// # Arguments
+    /// * `signer` - The authorized address providing the abstention.
+    /// * `proposal_id` - ID of the proposal to abstain from.
+    pub fn abstain_proposal(env: Env, signer: Address, proposal_id: u64) -> Result<(), VaultError> {
+        // Verify identity
+        signer.require_auth();
+
+        // Get config and validate signer
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&signer) {
+            return Err(VaultError::NotASigner);
+        }
+
+        // Get proposal
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Snapshot check: voter must have been a signer at proposal creation
+        if !proposal.snapshot_signers.contains(&signer) {
+            return Err(VaultError::VoterNotInSnapshot);
+        }
+
+        // Resolve delegation chain to get effective voter
+        let effective_voter = Self::resolve_delegation_chain(&env, &signer, 0);
+        let is_delegated = effective_voter != signer;
+
+        // Validate state
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Prevent double-abstaining or approving then abstaining
+        if proposal.approvals.contains(&effective_voter)
+            || proposal.abstentions.contains(&effective_voter)
+        {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        // Check expiration
+        let current_ledger = env.ledger().sequence() as u64;
+        if proposal.expires_at > 0 && current_ledger > proposal.expires_at {
+            proposal.status = ProposalStatus::Expired;
+            storage::set_proposal(&env, &proposal);
+            storage::metrics_on_expiry(&env);
+            events::emit_proposal_expired(&env, proposal_id, proposal.expires_at);
+            return Err(VaultError::ProposalExpired);
+        }
+
+        // Check voting deadline
+        if proposal.voting_deadline > 0 && current_ledger > proposal.voting_deadline {
+            proposal.status = ProposalStatus::Rejected;
+            storage::set_proposal(&env, &proposal);
+            storage::metrics_on_rejection(&env);
+            events::emit_proposal_deadline_rejected(&env, proposal_id, proposal.voting_deadline);
+            return Err(VaultError::VotingDeadlinePassed);
+        }
+
+        // Add abstention using effective voter
+        proposal.abstentions.push_back(effective_voter.clone());
+
+        // Emit delegated vote event if voting through delegation
+        if is_delegated {
+            events::emit_delegated_vote(&env, proposal_id, &effective_voter, &signer);
+        }
+
+        // Calculate current vote totals
+        let approval_count = proposal.approvals.len();
+        let abstention_count = proposal.abstentions.len();
+        let quorum_votes = approval_count + abstention_count;
+        let previous_quorum_votes = quorum_votes.saturating_sub(1);
+        let was_quorum_reached = config.quorum == 0 || previous_quorum_votes >= config.quorum;
+
+        // Check if threshold met AND quorum satisfied
+        let threshold_reached = Self::is_threshold_reached(&env, &config, &proposal);
+        let quorum_reached = config.quorum == 0 || quorum_votes >= config.quorum;
+        if config.quorum > 0 && !was_quorum_reached && quorum_reached {
+            events::emit_quorum_reached(&env, proposal_id, quorum_votes, config.quorum);
+        }
+
+        if threshold_reached && quorum_reached {
+            if proposal.execution_time.is_some() {
+                proposal.status = ProposalStatus::Scheduled;
+                events::emit_proposal_scheduled(
+                    &env,
+                    proposal_id,
+                    proposal.execution_time.unwrap(),
+                    current_ledger,
+                );
+            } else {
+                proposal.status = ProposalStatus::Approved;
+                if proposal.amount >= config.timelock_threshold {
+                    proposal.unlock_ledger = current_ledger + config.timelock_delay;
+                } else {
+                    proposal.unlock_ledger = 0;
+                }
+                events::emit_proposal_ready(&env, proposal_id, proposal.unlock_ledger);
+            }
+        }
+
+        storage::set_proposal(&env, &proposal);
+        storage::extend_instance_ttl(&env);
+
+        // Create audit entry
+        storage::create_audit_entry(&env, AuditAction::AbstainProposal, &signer, proposal_id);
+
+        // Emit event
+        events::emit_proposal_abstained(
+            &env,
+            proposal_id,
+            &effective_voter,
+            abstention_count as u32,
+            quorum_votes as u32,
+        );
+
+        // Track participation for abstaining
+        Self::update_reputation_on_abstention(&env, &effective_voter);
+
+        Ok(())
+    }
     /// Finalizes and executes an approved proposal.
     ///
     /// Can be called by anyone (even an automated tool) as long as:
@@ -974,6 +1096,15 @@ impl VaultDAO {
         }
 
         // Dependencies must be fully executed before this proposal can execute.
+        for dependency_id in proposal.depends_on.iter() {
+            if let Ok(dep_proposal) = storage::get_proposal(&env, dependency_id) {
+                if dep_proposal.status != ProposalStatus::Executed {
+                    return Err(VaultError::ProposalNotApproved);
+                }
+            } else {
+                return Err(VaultError::ProposalNotFound);
+            }
+        }
 
         // Enforce retry constraints if this is a retry attempt
         let config = storage::get_config(&env)?;
@@ -1157,7 +1288,7 @@ impl VaultDAO {
             return Err(VaultError::ProposalAlreadyCancelled);
         }
 
-        // Guard: only Pending proposals can be cancelled (Approved ones must use reject)
+        // Guard: only Pending proposals can be cancelled
         if proposal.status != ProposalStatus::Pending {
             return Err(VaultError::ProposalNotPending);
         }
@@ -1168,33 +1299,161 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
-        // --- Refund spending limits ---
-        storage::refund_spending_limits(&env, proposal.amount);
+        // Admin acting on *another* proposer's proposal → rejection semantics
+        let is_rejection = role == Role::Admin && canceller != proposal.proposer;
 
-        // --- Update proposal status ---
-        proposal.status = ProposalStatus::Cancelled;
-        storage::set_proposal(&env, &proposal);
+        if is_rejection {
+            proposal.status = ProposalStatus::Rejected;
+            storage::set_proposal(&env, &proposal);
+            storage::remove_from_priority_queue(
+                &env,
+                proposal.priority.clone() as u32,
+                proposal_id,
+            );
+            Self::update_reputation_on_rejection(&env, &proposal.proposer);
 
-        // --- Remove from priority queue ---
-        storage::remove_from_priority_queue(&env, proposal.priority.clone() as u32, proposal_id);
+            // ── Slash insurance ──────────────────────────────────────────────
+            let insurance_config = storage::get_insurance_config(&env);
+            if insurance_config.enabled && proposal.insurance_amount > 0 {
+                let slashed =
+                    proposal.insurance_amount * (insurance_config.slash_percentage as i128) / 100;
+                let kept = proposal.insurance_amount.saturating_sub(slashed);
+                if kept > 0 {
+                    token::transfer(&env, &proposal.token, &proposal.proposer, kept);
+                }
+                if slashed > 0 {
+                    storage::add_to_insurance_pool(&env, &proposal.token, slashed);
+                }
+                events::emit_insurance_slashed(
+                    &env,
+                    proposal_id,
+                    &proposal.proposer,
+                    slashed,
+                    kept,
+                );
+            }
 
-        // --- Store cancellation record (audit trail) ---
-        let current_ledger = env.ledger().sequence() as u64;
-        let record = crate::CancellationRecord {
-            proposal_id,
-            cancelled_by: canceller.clone(),
-            reason: reason.clone(),
-            cancelled_at_ledger: current_ledger,
-            refunded_amount: proposal.amount,
-        };
-        storage::set_cancellation_record(&env, &record);
-        storage::add_to_cancellation_history(&env, proposal_id);
-        storage::extend_instance_ttl(&env);
+            // ── Slash stake ──────────────────────────────────────────────────
+            let staking_config = storage::get_staking_config(&env);
+            if proposal.stake_amount > 0 {
+                if let Some(mut stake_record) = storage::get_stake_record(&env, proposal_id) {
+                    if !stake_record.refunded && !stake_record.slashed {
+                        let slashed_stake = if staking_config.enabled {
+                            proposal.stake_amount * staking_config.slash_percentage as i128 / 100
+                        } else {
+                            0
+                        };
+                        let returned_stake = proposal.stake_amount.saturating_sub(slashed_stake);
 
-        // Create audit entry
-        storage::create_audit_entry(&env, AuditAction::RejectProposal, &canceller, proposal_id);
+                        if returned_stake > 0 {
+                            token::transfer(
+                                &env,
+                                &proposal.token,
+                                &proposal.proposer,
+                                returned_stake,
+                            );
+                        }
+                        if slashed_stake > 0 {
+                            storage::add_to_stake_pool(&env, &proposal.token, slashed_stake);
+                        }
 
-        events::emit_proposal_rejected(&env, proposal_id, &canceller, &proposal.proposer);
+                        stake_record.slashed = slashed_stake > 0;
+                        stake_record.slashed_amount = slashed_stake;
+                        stake_record.released_at = env.ledger().sequence() as u64;
+                        storage::set_stake_record(&env, &stake_record);
+
+                        events::emit_stake_slashed(
+                            &env,
+                            proposal_id,
+                            &proposal.proposer,
+                            slashed_stake,
+                            returned_stake,
+                        );
+                    }
+                }
+            }
+
+            storage::create_audit_entry(&env, AuditAction::RejectProposal, &canceller, proposal_id);
+            events::emit_proposal_rejected(&env, proposal_id, &canceller, &proposal.proposer);
+        } else {
+            // ── Proposer-initiated cancellation ─────────────────────────────
+
+            // Refund reserved spending capacity
+            storage::refund_spending_limits(&env, proposal.amount);
+
+            proposal.status = ProposalStatus::Cancelled;
+            storage::set_proposal(&env, &proposal);
+
+            storage::remove_from_priority_queue(
+                &env,
+                proposal.priority.clone() as u32,
+                proposal_id,
+            );
+
+            // Store cancellation record (audit trail)
+            let current_ledger = env.ledger().sequence() as u64;
+            let record = crate::CancellationRecord {
+                proposal_id,
+                cancelled_by: canceller.clone(),
+                reason: reason.clone(),
+                cancelled_at_ledger: current_ledger,
+                refunded_amount: proposal.amount,
+            };
+            storage::set_cancellation_record(&env, &record);
+            storage::add_to_cancellation_history(&env, proposal_id);
+            storage::extend_instance_ttl(&env);
+
+            storage::create_audit_entry(&env, AuditAction::RejectProposal, &canceller, proposal_id);
+
+            events::emit_proposal_cancelled(
+                &env,
+                proposal_id,
+                &canceller,
+                &reason,
+                proposal.amount,
+            );
+
+            // ── Refund insurance in full ─────────────────────────────────────
+            if proposal.insurance_amount > 0 {
+                token::transfer(
+                    &env,
+                    &proposal.token,
+                    &proposal.proposer,
+                    proposal.insurance_amount,
+                );
+                events::emit_insurance_returned(
+                    &env,
+                    proposal_id,
+                    &proposal.proposer,
+                    proposal.insurance_amount,
+                );
+            }
+
+            // ── Refund stake in full ─────────────────────────────────────────
+            if proposal.stake_amount > 0 {
+                if let Some(mut stake_record) = storage::get_stake_record(&env, proposal_id) {
+                    if !stake_record.refunded && !stake_record.slashed {
+                        token::transfer(
+                            &env,
+                            &proposal.token,
+                            &proposal.proposer,
+                            proposal.stake_amount,
+                        );
+
+                        stake_record.refunded = true;
+                        stake_record.released_at = env.ledger().sequence() as u64;
+                        storage::set_stake_record(&env, &stake_record);
+
+                        events::emit_stake_refunded(
+                            &env,
+                            proposal_id,
+                            &proposal.proposer,
+                            proposal.stake_amount,
+                        );
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -1546,10 +1805,7 @@ impl VaultDAO {
             return Err(VaultError::InsufficientBalance);
         }
 
-        // Subtract from the stake pool tracker
         storage::subtract_from_stake_pool(&env, &token_addr, amount);
-
-        // Execute actual token transfer from vault
         token::transfer(&env, &token_addr, &recipient, amount);
 
         Ok(())
@@ -3791,7 +4047,10 @@ impl VaultDAO {
         }
 
         // Execute transfer
-        token::transfer(env, &proposal.token, &proposal.recipient, proposal.amount);
+        if token::try_transfer(env, &proposal.token, &proposal.recipient, proposal.amount).is_err()
+        {
+            return Err(VaultError::TransferFailed);
+        }
 
         // Return insurance to proposer on success
         if proposal.insurance_amount > 0 {
@@ -3839,6 +4098,51 @@ impl VaultDAO {
         proposal.gas_used = fee_estimate.total_fee;
 
         Ok(())
+    }
+
+    // ── Staking view functions ────────────────────────────────────────────────
+
+    /// Get the current staking configuration.
+    ///
+    /// Returns the full [`StakingConfig`] so frontends and SDKs can read all
+    /// staking parameters (enabled flag, stake basis points, slash percentage,
+    /// reputation discounts, etc.) in a single call.
+    ///
+    /// This is a read-only view function — no state mutations, no authorization
+    /// required.
+    pub fn get_staking_config(env: Env) -> types::StakingConfig {
+        storage::extend_instance_ttl(&env);
+        storage::get_staking_config(&env)
+    }
+
+    /// Get the stake record for a specific proposal.
+    ///
+    /// A stake record is created when a proposal is submitted and staking is
+    /// required for that amount.  It tracks whether the locked tokens have been
+    /// refunded (on success / proposer cancel) or slashed (on admin rejection).
+    ///
+    /// Returns `None` when:
+    /// * Staking was disabled at proposal creation time.
+    /// * The proposal amount was below `StakingConfig.min_amount`.
+    /// * The proposal was created via `batch_propose_transfers` (batch proposals
+    ///   never require individual stakes).
+    ///
+    /// # Arguments
+    /// * `proposal_id` — ID of the proposal whose stake record to retrieve.
+    pub fn get_stake_record(env: Env, proposal_id: u64) -> Option<types::StakeRecord> {
+        storage::extend_instance_ttl(&env);
+        storage::get_stake_record(&env, proposal_id)
+    }
+
+    /// Get the current accumulated balance of the slashed-stake pool for a token.
+    ///
+    /// When an admin rejects a proposal, the slashed portion of the proposer's
+    /// stake flows into this pool.  Admins can drain it via [`withdraw_stake_pool`].
+    ///
+    /// # Arguments
+    /// * `token_addr` — Token contract address to query.
+    pub fn get_stake_pool_balance(env: Env, token_addr: Address) -> i128 {
+        storage::get_stake_pool(&env, &token_addr)
     }
 
     fn calculate_execution_fee(env: &Env, proposal: &Proposal) -> ExecutionFeeEstimate {
