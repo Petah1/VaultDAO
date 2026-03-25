@@ -9177,7 +9177,7 @@ fn test_attachment_exactly_max_len_accepted() {
     // 128 chars
     let cid = soroban_sdk::String::from_str(
         &env,
-        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi0000000000000000000000000000000000000000000000000000000000000000000000000",
+        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi000000000000000000000000000000000000000000000000000000000000000000000",
     );
     assert_eq!(cid.len(), 128);
     assert!(client.try_add_attachment(&admin, &pid, &cid).is_ok());
@@ -9223,7 +9223,7 @@ fn test_attachment_too_long_rejected() {
     // 129 chars
     let cid = soroban_sdk::String::from_str(
         &env,
-        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi00000000000000000000000000000000000000000000000000000000000000000000000000",
+        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi0000000000000000000000000000000000000000000000000000000000000000000000",
     );
     assert_eq!(cid.len(), 129);
     let res = client.try_add_attachment(&admin, &pid, &cid);
