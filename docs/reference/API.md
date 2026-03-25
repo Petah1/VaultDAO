@@ -74,9 +74,11 @@ Creates the options object required by every SDK function.
 
 All write functions return a **prepared transaction XDR string**. Pass this to `signAndSubmit()` to broadcast.
 
-### `initialize(adminPublicKey, config, opts)`
+### 🟢 STABLE API
 
-Initialise the vault. **Can only be called once.**
+#### `initialize(adminPublicKey, config, opts)`
+
+🟢 **STABLE** - Core initialization (only call once).
 
 | Parameter        | Type         | Description                              |
 | ---------------- | ------------ | ---------------------------------------- |
@@ -103,11 +105,9 @@ const txXdr = await initialize(
 const hash = await signAndSubmit(txXdr, opts);
 ```
 
----
+#### `proposeTransfer(proposerPublicKey, recipient, tokenAddress, amount, memo, opts)`
 
-### `proposeTransfer(proposerPublicKey, recipient, tokenAddress, amount, memo, opts)`
-
-Create a new transfer proposal. Proposer must have `Treasurer` or `Admin` role.
+🟢 **STABLE** - Core proposal creation.
 
 | Parameter           | Type         | Description                          |
 | ------------------- | ------------ | ------------------------------------ |
@@ -123,6 +123,8 @@ Create a new transfer proposal. Proposer must have `Treasurer` or `Admin` role.
 **Errors:** `InsufficientRole`, `InvalidAmount`, `ExceedsProposalLimit`, `ExceedsDailyLimit`, `ExceedsWeeklyLimit`
 
 ---
+
+### 🟡 EXPERIMENTAL API
 
 ### `approveProposal(signerPublicKey, proposalId, opts)`
 

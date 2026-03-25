@@ -1,6 +1,25 @@
 //! VaultDAO - Multi-Signature Treasury Contract with Audit Trail
 //!
+//! # 🟢 STABLE FEATURES (Production-ready, public API)
+//! - Core multisig: initialize(), propose_transfer(), approve_proposal(), execute_proposal()
+//! - RBAC: set_role(), get_role()
+//! - Spending limits & velocity checks
+//! - Core reads: get_proposal(), get_config()
+//!
+//! # 🟡 EXPERIMENTAL FEATURES (Maturing - use with caution)
+//! - Batch operations: batch_propose_transfers()
+//! - Recurring payments: schedule_payment()
+//! - Escrow system
+//! - DEX swaps: propose_swap()
+//! - Reputation system
+//!
+//! # 🔴 UNSTABLE / DEVELOPMENT (Avoid in production)
+//! - Bridge module (EXPLICITLY EXCLUDED via #[cfg(feature = "bridge")])
+//! - Wallet recovery proposals
+//! - Proposal templates
+//! 
 //! A Soroban smart contract implementing M-of-N multisig with RBAC,
+
 //! proposal workflows, spending limits, reputation, insurance, and batch execution.
 
 #![no_std]
@@ -11,9 +30,10 @@
 #![allow(clippy::unnecessary_unwrap)]
 #![allow(clippy::let_unit_value)]
 
-// mod bridge; // Feature incomplete
+/// 🔴 UNSTABLE - Excluded from production builds via feature flag
 #[cfg(feature = "bridge")]
 mod bridge;
+
 mod errors;
 mod events;
 mod storage;
@@ -105,9 +125,12 @@ impl VaultDAO {
     // Initialization
     // ========================================================================
 
+    /// 🟢 STABLE - Core initialization function
+    ///
     /// Initialize the vault with its core configuration.
     ///
     /// This function can only be called once. It sets up the security parameters
+
     /// (threshold, signers) and the financial constraints (limits).
     ///
     /// # Arguments
@@ -570,9 +593,12 @@ impl VaultDAO {
         Ok(proposal_id)
     }
 
+    /// 🟡 EXPERIMENTAL - Batch proposal creation (gas-intensive)
+    ///
     /// Propose multiple transfers in a single batch, supporting multiple token types.
     ///
     /// Creates separate proposals for each transfer, enabling complex treasury operations
+
     /// like portfolio rebalancing with atomic multi-token transfers.
     ///
     /// # Arguments
@@ -2055,9 +2081,12 @@ impl VaultDAO {
     // Recurring Payments
     // ========================================================================
 
-    /// Schedule a new recurring payment
+    /// 🟡 EXPERIMENTAL - Recurring payment scheduling
     ///
+    /// Schedule a new recurring payment
+    /// 
     /// Only Treasurer or Admin can schedule.
+
     pub fn schedule_payment(
         env: Env,
         proposer: Address,
