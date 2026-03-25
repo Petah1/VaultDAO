@@ -9568,8 +9568,13 @@ fn test_metadata_remove_and_readd_stays_at_max() {
     }
     assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
     client.remove_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k01"));
-    assert!(client.try_set_proposal_metadata(
-        &admin, &pid, &Symbol::new(&env, "knew"), &soroban_sdk::String::from_str(&env, "v"),
-    ).is_ok());
+    assert!(client
+        .try_set_proposal_metadata(
+            &admin,
+            &pid,
+            &Symbol::new(&env, "knew"),
+            &soroban_sdk::String::from_str(&env, "v"),
+        )
+        .is_ok());
     assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
 }
