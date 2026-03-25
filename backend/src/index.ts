@@ -2,6 +2,7 @@ import type { BackendEnv } from "./config/env.js";
 import { loadEnv } from "./config/env.js";
 import { startServer } from "./server.js";
 import { createLogger } from "./shared/logging/logger.js";
+import { LifecycleManager } from "./app/lifecycle/lifecycle-manager.js";
 
 function maskContractId(contractId: string): string {
   if (contractId.length <= 10) return contractId;
@@ -25,4 +26,8 @@ function logStartupConfig(env: BackendEnv) {
 const env = loadEnv();
 
 logStartupConfig(env);
-startServer(env);
+
+// Start server and integrate with lifecycle management
+const server = startServer(env);
+const lifecycle = new LifecycleManager(server);
+lifecycle.initialize();
