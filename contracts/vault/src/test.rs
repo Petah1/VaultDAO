@@ -10287,13 +10287,13 @@ fn test_tag_add_remove_add_deterministic() {
     for name in &tag_names {
         client.add_proposal_tag(&admin, &pid, &Symbol::new(&env, name));
     }
-    assert_eq!(client.get_proposal_tags(&pid).unwrap().len(), 10);
+    assert_eq!(client.get_proposal_tags(&pid).len(), 10);
 
     // Remove one, then add a new one — should succeed
     client.remove_proposal_tag(&admin, &pid, &Symbol::new(&env, "t1"));
     let res = client.try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, "new"));
     assert!(res.is_ok(), "Should be able to add after removing one");
-    assert_eq!(client.get_proposal_tags(&pid).unwrap().len(), 10);
+    assert_eq!(client.get_proposal_tags(&pid).len(), 10);
 }
 
 /// Tags are stored without duplicates after add/remove cycles.
@@ -10317,7 +10317,7 @@ fn test_tag_no_duplicates_after_cycles() {
     client.remove_proposal_tag(&admin, &pid, &tag);
     client.add_proposal_tag(&admin, &pid, &tag);
 
-    let tags = client.get_proposal_tags(&pid).unwrap();
+    let tags = client.get_proposal_tags(&pid);
     assert_eq!(tags.len(), 1);
     assert!(tags.contains(&tag));
 }
@@ -10405,7 +10405,7 @@ fn test_remove_nonexistent_metadata_key_is_noop() {
     // Removing a key that was never set should succeed without error
     let res = client.try_remove_proposal_metadata(&admin, &pid, &Symbol::new(&env, "ghost"));
     assert!(res.is_ok(), "Removing non-existent key should be a no-op");
-    assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 0);
+    assert_eq!(client.get_proposal_metadata(&pid).len(), 0);
 }
 
 /// Metadata count stays at MAX after removing and re-adding a key.
@@ -10428,13 +10428,13 @@ fn test_metadata_remove_and_readd_stays_at_max() {
     for &k in &keys {
         client.set_proposal_metadata(&admin, &pid, &Symbol::new(&env, k), &String::from_str(&env, "v"));
     }
-    assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
+    assert_eq!(client.get_proposal_metadata(&pid).len(), 16);
 
     // Remove one, add a new key — should succeed
     client.remove_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k01"));
     let res = client.try_set_proposal_metadata(&admin, &pid, &Symbol::new(&env, "knew"), &String::from_str(&env, "v"));
     assert!(res.is_ok());
-    assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
+    assert_eq!(client.get_proposal_metadata(&pid).len(), 16);
 }
 
 /// No state change occurs when metadata validation fails (value too long).
@@ -10486,6 +10486,7 @@ fn test_attachment_no_state_change_on_invalid_cid() {
     // Attachment list must remain empty
     let proposal = client.get_proposal(&pid);
     assert_eq!(proposal.attachments.len(), 0);
+}
 
 // API Compatibility Tests
 // ============================================================================
