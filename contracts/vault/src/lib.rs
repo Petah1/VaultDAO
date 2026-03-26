@@ -2815,7 +2815,7 @@ impl VaultDAO {
     }
 
     /// Stricter CID validation: Qm/Qb prefix + base58/base32 chars only
-fn validate_strict_attachment_cid(attachment: &String) -> Result<(), VaultError> {
+    fn validate_strict_attachment_cid(attachment: &String) -> Result<(), VaultError> {
         Self::validate_attachment_cid(attachment)?;
 
         let bytes = attachment.as_bytes();
@@ -2839,7 +2839,7 @@ fn validate_strict_attachment_cid(attachment: &String) -> Result<(), VaultError>
     }
 
     /// Validate metadata key: non-empty, <=64 chars, alphanumeric+underscore only
-fn validate_metadata_key(key: &Symbol) -> Result<(), VaultError> {
+    fn validate_metadata_key(key: &Symbol) -> Result<(), VaultError> {
         let bytes = key.as_bytes();
         let len = bytes.len();
         if len == 0 || len > MAX_METADATA_KEY_LEN as usize {
@@ -2847,7 +2847,11 @@ fn validate_metadata_key(key: &Symbol) -> Result<(), VaultError> {
         }
         for i in 0..len {
             let b = bytes[i as usize];
-            if !((b >= b'0' && b <= b'9') || (b >= b'A' && b <= b'Z') || (b >= b'a' && b <= b'z') || b == b'_') {
+            if !((b >= b'0' && b <= b'9')
+                || (b >= b'A' && b <= b'Z')
+                || (b >= b'a' && b <= b'z')
+                || b == b'_')
+            {
                 return Err(VaultError::MetadataKeyInvalid);
             }
         }
@@ -2855,7 +2859,7 @@ fn validate_metadata_key(key: &Symbol) -> Result<(), VaultError> {
     }
 
     /// Validate tag: <=32 chars, alphanumeric+hyphen+underscore only
-fn validate_tag(env: &Env, tag: &Symbol) -> Result<Symbol, VaultError> {
+    fn validate_tag(env: &Env, tag: &Symbol) -> Result<Symbol, VaultError> {
         let bytes = tag.as_bytes();
         let len = bytes.len();
         if len == 0 || len > MAX_TAG_LEN as usize {
@@ -2863,7 +2867,12 @@ fn validate_tag(env: &Env, tag: &Symbol) -> Result<Symbol, VaultError> {
         }
         for i in 0..len {
             let b = bytes[i as usize];
-            if !((b >= b'0' && b <= b'9') || (b >= b'A' && b <= b'Z') || (b >= b'a' && b <= b'z') || b == b'-' || b == b'_') {
+            if !((b >= b'0' && b <= b'9')
+                || (b >= b'A' && b <= b'Z')
+                || (b >= b'a' && b <= b'z')
+                || b == b'-'
+                || b == b'_')
+            {
                 return Err(VaultError::TagInvalid);
             }
         }
@@ -3047,7 +3056,7 @@ fn validate_tag(env: &Env, tag: &Symbol) -> Result<Symbol, VaultError> {
     /// Add a tag to a proposal.
     ///
     /// Only Admin or the original proposer can add tags.
-pub fn add_proposal_tag(
+    pub fn add_proposal_tag(
         env: Env,
         caller: Address,
         proposal_id: u64,
