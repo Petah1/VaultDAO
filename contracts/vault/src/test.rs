@@ -11494,7 +11494,16 @@ fn test_portfolio_valuation_saturating_arithmetic() {
     // This would fail without oracle mock, but demonstrates the API accepts large amounts
 }
 
-fn make_client(env: &Env) -> (VaultDAOClient, soroban_sdk::Address, soroban_sdk::Address, soroban_sdk::Address, soroban_sdk::Address) {
+
+fn make_client(
+    env: &Env,
+) -> (
+    VaultDAOClient,
+    soroban_sdk::Address,
+    soroban_sdk::Address,
+    soroban_sdk::Address,
+    soroban_sdk::Address,
+) {
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(env, &contract_id);
     let admin = soroban_sdk::Address::generate(env);
@@ -11514,7 +11523,10 @@ fn make_client(env: &Env) -> (VaultDAOClient, soroban_sdk::Address, soroban_sdk:
         weekly_limit: 10000,
         timelock_threshold: 500,
         timelock_delay: 100,
-        velocity_limit: VelocityConfig { limit: 100, window: 3600 },
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
         threshold_strategy: ThresholdStrategy::Fixed,
     };
     client.initialize(&admin, &config);
@@ -11528,7 +11540,8 @@ fn test_metadata_valid_value() {
     env.mock_all_auths();
     let (client, _admin, signer1, user, token) = make_client(&env);
 
-    let proposal_id = client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"));
+    let proposal_id =
+        client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"));
     let key = Symbol::new(&env, "note");
     let value = String::from_str(&env, "hello");
 
@@ -11543,7 +11556,8 @@ fn test_metadata_empty_value_rejected() {
     env.mock_all_auths();
     let (client, _admin, signer1, user, token) = make_client(&env);
 
-    let proposal_id = client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"));
+    let proposal_id =
+        client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"));
     let key = Symbol::new(&env, "note");
     let empty = String::from_str(&env, "");
 
@@ -11557,7 +11571,8 @@ fn test_metadata_value_too_long_rejected() {
     env.mock_all_auths();
     let (client, _admin, signer1, user, token) = make_client(&env);
 
-    let proposal_id = client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"));
+    let proposal_id =
+        client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"));
     let key = Symbol::new(&env, "note");
     // 257 bytes — one over the limit
     let long: String = String::from_str(&env, &"a".repeat(257));
@@ -11572,18 +11587,21 @@ fn test_metadata_entry_limit_enforced() {
     env.mock_all_auths();
     let (client, _admin, signer1, user, token) = make_client(&env);
 
-    let proposal_id = client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"));
+    let proposal_id =
+        client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"));
     let val = String::from_str(&env, "v");
 
-    let keys = ["k1","k2","k3","k4","k5","k6","k7","k8","k9","k10","k11","k12","k13","k14","k15","k16"];
+    let keys = [
+        "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k10", "k11", "k12", "k13",
+        "k14", "k15", "k16",
+    ];
     for k in keys.iter() {
         client.set_proposal_metadata(&signer1, &proposal_id, &Symbol::new(&env, k), &val);
     }
 
     // 17th unique key must be rejected
-    let res = client.try_set_proposal_metadata(
-        &signer1, &proposal_id, &Symbol::new(&env, "k17"), &val,
-    );
+    let res =
+        client.try_set_proposal_metadata(&signer1, &proposal_id, &Symbol::new(&env, "k17"), &val);
     assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
 }
 
@@ -11593,10 +11611,14 @@ fn test_metadata_update_existing_key_at_capacity() {
     env.mock_all_auths();
     let (client, _admin, signer1, user, token) = make_client(&env);
 
-    let proposal_id = client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"));
+    let proposal_id =
+        client.propose_transfer(&signer1, &user, &token, &100, &Symbol::new(&env, "test"));
     let val = String::from_str(&env, "v");
 
-    let keys = ["k1","k2","k3","k4","k5","k6","k7","k8","k9","k10","k11","k12","k13","k14","k15","k16"];
+    let keys = [
+        "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k10", "k11", "k12", "k13",
+        "k14", "k15", "k16",
+    ];
     for k in keys.iter() {
         client.set_proposal_metadata(&signer1, &proposal_id, &Symbol::new(&env, k), &val);
     }
@@ -11607,5 +11629,8 @@ fn test_metadata_update_existing_key_at_capacity() {
 
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.metadata.len(), 16);
-    assert_eq!(proposal.metadata.get(Symbol::new(&env, "k1")), Some(updated));
+    assert_eq!(
+        proposal.metadata.get(Symbol::new(&env, "k1")),
+        Some(updated)
+    );
 }
