@@ -7,6 +7,11 @@ use soroban_sdk::contracterror;
 #[repr(u32)]
 pub enum VaultError {
     AlreadyInitialized = 1,
+    // Compact new errors - short names to fix #[contracterror] LengthExceedsMax
+    MetadataKeyInvalid = 270,
+    TagInvalid = 271,
+    AttachmentCIDInvalid = 272,
+    ProposalImmutable = 273,
     NotInitialized = 2,
     NoSigners = 3,
     ThresholdTooLow = 4,
@@ -105,17 +110,12 @@ pub enum VaultError {
     /// Permission explicitly denied
     PermissionDenied = 252,
 
-    /// Metadata key is invalid (empty, too long, invalid chars)
     MetadataKeyInvalid = 270,
-    /// Tag is invalid (empty, too long, invalid chars)
     TagInvalid = 271,
-    /// Attachment CID is malformed (no Qm/Qb prefix, invalid chars)
     AttachmentCIDInvalid = 272,
-    /// Cannot modify approved/immutable proposal
     ProposalImmutable = 273,
 
-    /// DEX swap operation failed
-    SwapFailed = 253,
+    SwapFailed = 274,
     /// Insufficient stake amount provided
     StakeInsufficient = 254,
     /// Token lock period has expired

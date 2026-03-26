@@ -34,9 +34,9 @@
 #[cfg(feature = "bridge")]
 mod bridge;
 
-mod errors;
+pub mod errors;
 mod events;
-mod storage;
+pub mod storage;
 mod token;
 mod types;
 
@@ -2815,19 +2815,23 @@ impl VaultDAO {
     }
 
     /// Stricter CID validation: Qm/Qb prefix + base58/base32 chars only
-    fn validate_strict_attachment_cid(attachment: &String) -> Result<(), VaultError> {
+fn validate_strict_attachment_cid(attachment: &String) -> Result<(), VaultError> {
         Self::validate_attachment_cid(attachment)?;
 
-        let s = attachment.as_str();
-        // Must start with valid CID prefix
-        if !s.starts_with("Qm") && !s.starts_with("Qb") {
+        let bytes = attachment.as_bytes();
+        let len = bytes.len();
+        if len < 2 {
+            return Err(VaultError::AttachmentCIDInvalid);
+        }
+        let prefix1 = bytes[0];
+        let prefix2 = bytes[1];
+        if !((prefix1 == b'Q' && prefix2 == b'm') || (prefix1 == b'Q' && prefix2 == b'b')) {
             return Err(VaultError::AttachmentCIDInvalid);
         }
 
-        // Base58 chars + / only (CIDv0), or base32 chars (CIDv1)
-        let valid_chars = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-        for c in s.as_bytes() {
-            if !valid_chars.contains(c) && *c != b'/' {
+        let valid_chars = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz/";
+        for i in 0..len {
+            if !valid_chars.contains(&bytes[i as usize]) {
                 return Err(VaultError::AttachmentCIDInvalid);
             }
         }
@@ -2835,15 +2839,15 @@ impl VaultDAO {
     }
 
     /// Validate metadata key: non-empty, <=64 chars, alphanumeric+underscore only
-    fn validate_metadata_key(key: &Symbol) -> Result<(), VaultError> {
-        let key_str = key.to_string();
-        let len = key_str.len();
+fn validate_metadata_key(key: &Symbol) -> Result<(), VaultError> {
+        let bytes = key.as_bytes();
+        let len = bytes.len();
         if len == 0 || len > MAX_METADATA_KEY_LEN as usize {
             return Err(VaultError::MetadataKeyInvalid);
         }
-        // Alphanumeric + underscore only
-        for c in key_str.chars() {
-            if !c.is_alphanumeric() && c != '_' {
+        for i in 0..len {
+            let b = bytes[i as usize];
+            if !((b >= b'0' && b <= b'9') || (b >= b'A' && b <= b'Z') || (b >= b'a' && b <= b'z') || b == b'_') {
                 return Err(VaultError::MetadataKeyInvalid);
             }
         }
@@ -2851,20 +2855,29 @@ impl VaultDAO {
     }
 
     /// Validate tag: <=32 chars, alphanumeric+hyphen+underscore only
-    fn validate_tag(tag: &Symbol) -> Result<Symbol, VaultError> {
-        let tag_str = tag.to_string();
-        let len = tag_str.len();
+fn validate_tag(env: &Env, tag: &Symbol) -> Result<Symbol, VaultError> {
+        let bytes = tag.as_bytes();
+        let len = bytes.len();
         if len == 0 || len > MAX_TAG_LEN as usize {
             return Err(VaultError::TagInvalid);
         }
-        // Alphanumeric + hyphen + underscore only
-        for c in tag_str.chars() {
-            if !c.is_alphanumeric() && c != '-' && c != '_' {
+        for i in 0..len {
+            let b = bytes[i as usize];
+            if !((b >= b'0' && b <= b'9') || (b >= b'A' && b <= b'Z') || (b >= b'a' && b <= b'z') || b == b'-' || b == b'_') {
                 return Err(VaultError::TagInvalid);
             }
         }
-        // Return lowercase normalized version
-        Ok(Symbol::new(tag.env(), tag_str.to_lowercase().as_str()))
+        // Simple lowercase normalize (manual for Soroban Symbol)
+        let mut lower_bytes = Vec::new(env);
+        for i in 0..len {
+            let mut b = bytes[i as usize];
+            if b >= b'A' && b <= b'Z' {
+                b += (b'a' - b'A');
+            }
+            lower_bytes.push_back(b as u8);
+        }
+        let lower_str = String::from_bytes(env, &lower_bytes);
+        Ok(Symbol::new(env, &lower_str))
     }
 
     /// Check if proposal can still be modified (before Approved)
@@ -3034,7 +3047,7 @@ impl VaultDAO {
     /// Add a tag to a proposal.
     ///
     /// Only Admin or the original proposer can add tags.
-    pub fn add_proposal_tag(
+pub fn add_proposal_tag(
         env: Env,
         caller: Address,
         proposal_id: u64,
@@ -3049,15 +3062,20 @@ impl VaultDAO {
             return Err(VaultError::Unauthorized);
         }
 
-        if proposal.tags.contains(&tag) {
-            return Err(VaultError::DuplicateTag);
+        let normalized_tag = validate_tag(&env, &tag)?;
+        // Case-insensitive dupe check
+        for i in 0..proposal.tags.len() {
+            let existing = proposal.tags.get(i).unwrap();
+            if validate_tag(&env, &existing)? == normalized_tag {
+                return Err(VaultError::DuplicateTag);
+            }
         }
 
         if proposal.tags.len() >= MAX_TAGS {
             return Err(VaultError::TooManyTags);
         }
 
-        proposal.tags.push_back(tag);
+        proposal.tags.push_back(normalized_tag);
         storage::set_proposal(&env, &proposal);
         storage::extend_instance_ttl(&env);
 
