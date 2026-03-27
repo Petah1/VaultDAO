@@ -20,6 +20,9 @@ function createTestEnv(
     websocketUrl: "ws://localhost:8080",
     eventPollingIntervalMs: 10,
     eventPollingEnabled: true,
+    corsOrigin: ["*"],
+    requestBodyLimit: "10kb",
+    apiKey: "test-api-key",
     ...overrides,
   };
 }

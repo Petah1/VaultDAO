@@ -14,6 +14,8 @@ const mockEnv = {
   eventPollingIntervalMs: 5000,
   eventPollingEnabled: false,
   corsOrigin: ["*"],
+  requestBodyLimit: "10kb",
+  apiKey: "test-api-key",
 };
 
 const mockRuntime = {

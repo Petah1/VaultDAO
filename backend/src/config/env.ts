@@ -11,6 +11,7 @@ export interface BackendEnv {
   readonly eventPollingEnabled: boolean;
   readonly corsOrigin: string[];
   readonly requestBodyLimit: string;
+  readonly apiKey?: string;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -137,6 +138,7 @@ export function loadEnv(): BackendEnv {
   const eventPollingEnabled = readString("EVENT_POLLING_ENABLED", "true") === "true";
   const corsOrigin = readCommaSeparatedString("CORS_ORIGIN", nodeEnv === "production" ? [] : ["*"]);
   const requestBodyLimit = readString("REQUEST_BODY_LIMIT", "10kb");
+  const apiKey = readValue("API_KEY");
 
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
@@ -155,6 +157,10 @@ export function loadEnv(): BackendEnv {
     issues.push("CORS_ORIGIN is required in production environment.");
   }
 
+  if (nodeEnv === "production" && !apiKey) {
+    issues.push("API_KEY is required in production environment.");
+  }
+
   throwIfInvalid(issues);
 
   return {
@@ -170,5 +176,6 @@ export function loadEnv(): BackendEnv {
     eventPollingEnabled,
     corsOrigin,
     requestBodyLimit,
+    apiKey,
   };
 }
