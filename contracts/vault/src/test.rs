@@ -7738,6 +7738,95 @@ fn test_veto_blocks_execution() {
 }
 
 #[test]
+fn test_veto_refunds_insurance_and_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let vetoer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    // Mint enough for proposal amount + insurance + stake
+    token_client.mint(&contract_id, &10_000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+
+    let mut veto_addresses = Vec::new(&env);
+    veto_addresses.push_back(vetoer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        default_voting_deadline: 0,
+        spending_limit: 5000,
+        daily_limit: 10000,
+        weekly_limit: 50000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 10000,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses,
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: crate::types::StakingConfig::default(),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // Mint insurance + stake directly to proposer so they can lock them
+    token_client.mint(&proposer, &500);
+
+    let insurance_amount = 200_i128;
+    let _stake_amount = 100_i128;
+
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &100_i128,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &insurance_amount,
+    );
+
+    // Record proposer balance before veto
+    let balance_before = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
+
+    // Veto the proposal
+    client.veto_proposal(&vetoer, &proposal_id);
+
+    assert_eq!(
+        client.get_proposal(&proposal_id).status,
+        ProposalStatus::Vetoed
+    );
+
+    // Insurance should be returned to proposer
+    let balance_after = soroban_sdk::token::Client::new(&env, &token).balance(&proposer);
+    assert_eq!(balance_after, balance_before + insurance_amount);
+}
+
+#[test]
 fn test_execution_rollback_restores_proposal_status_on_transfer_failure() {
     let env = Env::default();
     env.mock_all_auths();

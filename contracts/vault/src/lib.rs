@@ -1270,6 +1270,48 @@ impl VaultDAO {
         storage::remove_from_priority_queue(&env, proposal.priority.clone() as u32, proposal_id);
         storage::extend_instance_ttl(&env);
 
+        // Refund reserved spending capacity
+        storage::refund_spending_limits(&env, proposal.amount);
+
+        // Veto is not punitive — return insurance in full
+        if proposal.insurance_amount > 0 {
+            token::transfer(
+                &env,
+                &proposal.token,
+                &proposal.proposer,
+                proposal.insurance_amount,
+            );
+            events::emit_insurance_returned(
+                &env,
+                proposal_id,
+                &proposal.proposer,
+                proposal.insurance_amount,
+            );
+        }
+
+        // Return stake in full
+        if proposal.stake_amount > 0 {
+            if let Some(mut stake_record) = storage::get_stake_record(&env, proposal_id) {
+                if !stake_record.refunded && !stake_record.slashed {
+                    token::transfer(
+                        &env,
+                        &proposal.token,
+                        &proposal.proposer,
+                        proposal.stake_amount,
+                    );
+                    stake_record.refunded = true;
+                    stake_record.released_at = env.ledger().sequence() as u64;
+                    storage::set_stake_record(&env, &stake_record);
+                    events::emit_stake_refunded(
+                        &env,
+                        proposal_id,
+                        &proposal.proposer,
+                        proposal.stake_amount,
+                    );
+                }
+            }
+        }
+
         events::emit_proposal_vetoed(&env, proposal_id, &vetoer);
 
         Ok(())
