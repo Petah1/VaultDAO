@@ -1924,3 +1924,37 @@ pub fn add_proposal_dispute(env: &Env, proposal_id: u64, dispute_id: u64) {
         .persistent()
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
 }
+
+// ============================================================================
+// Subscriptions
+// ============================================================================
+
+fn get_next_subscription_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&FeatureKey::NextSubscriptionId)
+        .unwrap_or(1)
+}
+
+pub fn increment_subscription_id(env: &Env) -> u64 {
+    let id = get_next_subscription_id(env);
+    env.storage()
+        .instance()
+        .set(&FeatureKey::NextSubscriptionId, &(id + 1));
+    id
+}
+
+pub fn set_subscription(env: &Env, sub: &Subscription) {
+    let key = FeatureKey::Subscription(sub.id);
+    env.storage().persistent().set(&key, sub);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL);
+}
+
+pub fn get_subscription(env: &Env, id: u64) -> Result<Subscription, VaultError> {
+    env.storage()
+        .persistent()
+        .get(&FeatureKey::Subscription(id))
+        .ok_or(VaultError::ProposalNotFound)
+}
