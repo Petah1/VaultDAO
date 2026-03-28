@@ -48,10 +48,6 @@ pub enum VaultError {
     IntervalTooShort = 150,
     DexError = 160,
     RetryError = 168,
-    TemplateNotFound = 210,
-    TemplateInactive = 211,
-    TemplateValidationFailed = 212,
-    FundingRoundError = 220,
     /// Attachment hash is too short or too long to be a valid CID
     AttachmentHashInvalid = 230,
     /// Proposal has reached the maximum number of attachments

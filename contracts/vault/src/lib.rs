@@ -4230,7 +4230,7 @@ impl VaultDAO {
 
         // Validate parameters
         if !Self::validate_template_params(env.clone(), amount, min_amount, max_amount) {
-            return Err(VaultError::TemplateValidationFailed);
+            return Err(VaultError::InvalidAmount);
         }
 
         // Create template
@@ -4340,7 +4340,7 @@ impl VaultDAO {
         let template = storage::get_template(&env, template_id)?;
 
         if !template.is_active {
-            return Err(VaultError::TemplateInactive);
+            return Err(VaultError::ProposalNotPending);
         }
 
         // Check role
@@ -4373,10 +4373,10 @@ impl VaultDAO {
 
         // Validate amount is within template bounds
         if template.min_amount > 0 && amount < template.min_amount {
-            return Err(VaultError::TemplateValidationFailed);
+            return Err(VaultError::InvalidAmount);
         }
         if template.max_amount > 0 && amount > template.max_amount {
-            return Err(VaultError::TemplateValidationFailed);
+            return Err(VaultError::InvalidAmount);
         }
 
         // Load config for validation
@@ -5989,18 +5989,18 @@ impl VaultDAO {
         creator.require_auth();
 
         let config =
-            storage::get_funding_round_config(&env).ok_or(VaultError::FundingRoundError)?;
+            storage::get_funding_round_config(&env).ok_or(VaultError::InvalidAmount)?;
 
         if !config.enabled {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         if milestones.len() < config.min_milestones as u32 {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         if milestones.len() > config.max_milestones as u32 {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         // Verify proposal exists
@@ -6057,7 +6057,7 @@ impl VaultDAO {
         let mut round = storage::get_funding_round(&env, round_id)?;
 
         if round.status != FundingRoundStatus::Pending {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         round.status = FundingRoundStatus::Active;
@@ -6085,17 +6085,17 @@ impl VaultDAO {
         }
 
         if round.status != FundingRoundStatus::Active {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         if milestone_index >= round.milestones.len() {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let milestone = &round.milestones.get(milestone_index).unwrap();
 
         if milestone.status != FundingMilestoneStatus::Pending {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let mut updated_milestone = milestone.clone();
@@ -6127,17 +6127,17 @@ impl VaultDAO {
         let mut round = storage::get_funding_round(&env, round_id)?;
 
         if round.status != FundingRoundStatus::Active {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         if milestone_index >= round.milestones.len() {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let milestone = &round.milestones.get(milestone_index).unwrap();
 
         if milestone.status != FundingMilestoneStatus::Submitted {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let mut updated_milestone = milestone.clone();
@@ -6171,17 +6171,17 @@ impl VaultDAO {
         let mut round = storage::get_funding_round(&env, round_id)?;
 
         if round.status != FundingRoundStatus::Active {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         if milestone_index >= round.milestones.len() {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let milestone = &round.milestones.get(milestone_index).unwrap();
 
         if milestone.status != FundingMilestoneStatus::Verified {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         let amount = milestone.amount;
@@ -6223,7 +6223,7 @@ impl VaultDAO {
         if round.status == FundingRoundStatus::Completed
             || round.status == FundingRoundStatus::Cancelled
         {
-            return Err(VaultError::FundingRoundError);
+            return Err(VaultError::InvalidAmount);
         }
 
         round.status = FundingRoundStatus::Cancelled;

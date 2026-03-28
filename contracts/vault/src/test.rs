@@ -1,4 +1,4 @@
-#![cfg(test)]
+ï»¿#![cfg(test)]
 
 use super::*;
 use crate::types::{
@@ -26,7 +26,7 @@ fn default_init_config(
     InitConfig {
         signers,
         threshold,
-        quorum: 0, // disabled by default — existing tests are unaffected
+        quorum: 0, // disabled by default   existing tests are unaffected
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
@@ -993,12 +993,12 @@ fn test_abstention_does_not_count_toward_threshold() {
         &0i128,
     );
 
-    // Signer2 abstains — threshold still requires 2 approvals
+    // Signer2 abstains   threshold still requires 2 approvals
     client.abstain_from_proposal(&signer2, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Pending);
 
-    // Only 1 approval — not enough even though signer2 abstained
+    // Only 1 approval   not enough even though signer2 abstained
     client.approve_proposal(&signer1, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Pending);
@@ -3459,7 +3459,7 @@ fn test_batch_propose_exceeds_max_size() {
 }
 
 // ============================================================================
-// NEW TESTS — Abstention Votes & Quorum (Issue #117)
+// NEW TESTS   Abstention Votes & Quorum (Issue #117)
 // ============================================================================
 
 /// Quorum disabled (quorum=0): proposals approve on threshold alone, same as before.
@@ -3657,7 +3657,7 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
     signers.push_back(signer3.clone());
     signers.push_back(signer4.clone());
 
-    // threshold=3, quorum=2 — quorum is easy to satisfy
+    // threshold=3, quorum=2   quorum is easy to satisfy
     let config = InitConfig {
         signers,
         threshold: 3,
@@ -4121,7 +4121,7 @@ fn test_quorum_satisfied_by_approvals_alone() {
     signers.push_back(signer1.clone());
     signers.push_back(signer2.clone());
 
-    // threshold=2, quorum=2 — two approvals should satisfy both
+    // threshold=2, quorum=2   two approvals should satisfy both
     let config = InitConfig {
         signers,
         threshold: 2,
@@ -4189,7 +4189,7 @@ fn test_initialize_rejects_quorum_too_high() {
     signers.push_back(admin.clone());
     signers.push_back(signer1.clone());
 
-    // quorum=3 but only 2 signers — should fail
+    // quorum=3 but only 2 signers   should fail
     let config = InitConfig {
         signers,
         threshold: 1,
@@ -4303,7 +4303,7 @@ fn test_retry_schedules_on_retryable_failure() {
     // Approve to reach threshold
     client.approve_proposal(&admin, &proposal_id);
 
-    // Execute — should schedule retry (returns Ok) instead of failing
+    // Execute   should schedule retry (returns Ok) instead of failing
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert!(result.is_ok(), "Expected Ok when retry is scheduled");
 
@@ -4334,10 +4334,10 @@ fn test_retry_backoff_enforced() {
 
     client.approve_proposal(&admin, &proposal_id);
 
-    // First execution — schedules retry
+    // First execution   schedules retry
     client.execute_proposal(&admin, &proposal_id);
 
-    // Try again immediately — should fail with RetryError
+    // Try again immediately   should fail with RetryError
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert_eq!(result.err(), Some(Ok(VaultError::RetryError)));
 }
@@ -4370,7 +4370,7 @@ fn test_retry_max_retries_exhausted() {
         client.execute_proposal(&admin, &proposal_id);
     }
 
-    // 4th attempt — max retries exhausted
+    // 4th attempt   max retries exhausted
     env.ledger().with_mut(|li| {
         li.sequence_number += 100;
     });
@@ -4397,13 +4397,13 @@ fn test_retry_exponential_backoff_increases() {
 
     client.approve_proposal(&admin, &proposal_id);
 
-    // First retry — backoff = 10
+    // First retry   backoff = 10
     client.execute_proposal(&admin, &proposal_id);
     let state1 = client.get_retry_state(&proposal_id).unwrap();
     let backoff1 = state1.next_retry_ledger - state1.last_retry_ledger;
     assert_eq!(backoff1, 10);
 
-    // Advance and trigger second retry — backoff = 20
+    // Advance and trigger second retry   backoff = 20
     env.ledger().with_mut(|li| {
         li.sequence_number += 11;
     });
@@ -4412,7 +4412,7 @@ fn test_retry_exponential_backoff_increases() {
     let backoff2 = state2.next_retry_ledger - state2.last_retry_ledger;
     assert_eq!(backoff2, 20);
 
-    // Advance and trigger third retry — backoff = 40
+    // Advance and trigger third retry   backoff = 40
     env.ledger().with_mut(|li| {
         li.sequence_number += 21;
     });
@@ -4602,7 +4602,7 @@ fn test_retry_succeeds_after_balance_funded() {
 
     client.approve_proposal(&admin, &proposal_id);
 
-    // First attempt fails — insufficient balance (vault has 500, need 1000)
+    // First attempt fails   insufficient balance (vault has 500, need 1000)
     client.execute_proposal(&admin, &proposal_id);
 
     // Fund the vault with enough tokens
@@ -6124,7 +6124,7 @@ fn test_create_from_template_amount_out_of_range() {
         priority: Priority::Normal,
     };
     let result = client.try_create_from_template(&treasurer, &template_id, &overrides);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateValidationFailed)));
+    assert_eq!(result.err(), Some(Ok(VaultError::InvalidAmount)));
 
     // Try amount above maximum
     let overrides = TemplateOverrides {
@@ -6138,7 +6138,7 @@ fn test_create_from_template_amount_out_of_range() {
         priority: Priority::Normal,
     };
     let result = client.try_create_from_template(&treasurer, &template_id, &overrides);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateValidationFailed)));
+    assert_eq!(result.err(), Some(Ok(VaultError::InvalidAmount)));
 }
 
 /// Test that inactive template cannot be used
@@ -6219,7 +6219,7 @@ fn test_create_from_inactive_template() {
         priority: Priority::Normal,
     };
     let result = client.try_create_from_template(&treasurer, &template_id, &overrides);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateInactive)));
+    assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotPending)));
 }
 
 #[test]
@@ -6377,7 +6377,7 @@ fn test_reputation_high_score_get_limits_boost() {
         priority: Priority::Normal,
     };
     let result = client.try_create_from_template(&treasurer, &template_id, &overrides);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateInactive)));
+    assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotPending)));
 }
 
 /// Test template not found error
@@ -6423,7 +6423,7 @@ fn test_template_not_found() {
 
     // Try to get non-existent template
     let result = client.try_get_template(&999);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateNotFound)));
+    assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotFound)));
 }
 
 /// Test template validation function
@@ -7809,7 +7809,7 @@ fn test_set_role_non_admin_fails() {
 
     client.initialize(&admin, &default_init_config(&env, signers, 1));
 
-    // signer1 is a Member — cannot assign roles
+    // signer1 is a Member   cannot assign roles
     let result = client.try_set_role(&signer1, &user, &Role::Treasurer);
     assert_eq!(result, Err(Ok(VaultError::Unauthorized)));
 
@@ -8357,7 +8357,7 @@ fn test_list_recurring_payments_pagination() {
 }
 
 // ===========================================================================
-// INVARIANT TESTS — Multisig Core Safety Rules
+// INVARIANT TESTS   Multisig Core Safety Rules
 // ===========================================================================
 //
 // These tests verify structural invariants rather than happy-path scenarios.
@@ -8540,7 +8540,7 @@ fn invariant_non_signer_cannot_approve() {
 // ===========================================================================
 
 /// Invariant: a signer added after a proposal was created cannot vote on it
-/// (snapshot isolation — the snapshot was taken at proposal creation time).
+/// (snapshot isolation   the snapshot was taken at proposal creation time).
 #[test]
 fn invariant_late_signer_cannot_vote_on_pre_existing_proposal() {
     let env = Env::default();
@@ -8584,7 +8584,7 @@ fn invariant_late_signer_cannot_vote_on_pre_existing_proposal() {
     new_signers.push_back(late_signer.clone());
     // We can't call add_signer directly (no such function), so we verify the
     // snapshot guard by attempting to approve as late_signer who is not in config
-    // at all — the NotASigner check fires first, which is the correct guard.
+    // at all   the NotASigner check fires first, which is the correct guard.
     let res = client.try_approve_proposal(&late_signer, &pid);
     assert_eq!(res.err(), Some(Ok(VaultError::NotASigner)));
 }
@@ -8632,7 +8632,7 @@ fn invariant_removed_signer_cannot_vote_on_open_proposal() {
     // conceptually removed. We verify that signer2 (not in current config after
     // threshold update) is still blocked. Since there's no remove_signer function,
     // we test the config-level check: update threshold to 1 and verify signer2
-    // (still in config) can vote — confirming the snapshot check is the guard.
+    // (still in config) can vote   confirming the snapshot check is the guard.
     // The real invariant: approval count never exceeds signer count.
     client.approve_proposal(&signer1, &pid);
     let proposal = client.get_proposal(&pid);
@@ -8715,7 +8715,7 @@ fn invariant_pending_proposal_cannot_be_executed() {
         &0i128,
     );
 
-    // Only one approval — threshold not met, still Pending
+    // Only one approval   threshold not met, still Pending
     client.approve_proposal(&signer1, &pid);
     let proposal = client.get_proposal(&pid);
     assert_eq!(proposal.status, ProposalStatus::Pending);
@@ -9149,7 +9149,7 @@ fn invariant_execution_requires_prior_approval() {
         &0i128,
     );
 
-    // Zero approvals — must not execute
+    // Zero approvals   must not execute
     let res = client.try_execute_proposal(&admin, &pid);
     assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotApproved)));
 }
@@ -9518,7 +9518,7 @@ fn test_tag_up_to_max_succeeds() {
             .try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, name))
             .is_ok());
     }
-    assert_eq!(client.get_proposal_tags(&pid).unwrap().len(), 10);
+    assert_eq!(client.get_proposal_tags(&pid).len(), 10);
 }
 
 /// Duplicate tag returns DuplicateTag.
@@ -9605,7 +9605,7 @@ fn test_tag_add_remove_add_deterministic() {
     assert!(client
         .try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, "new"))
         .is_ok());
-    assert_eq!(client.get_proposal_tags(&pid).unwrap().len(), 10);
+    assert_eq!(client.get_proposal_tags(&pid).len(), 10);
 }
 
 // --- Metadata: boundary and edge cases ---
@@ -9715,9 +9715,7 @@ fn test_metadata_no_state_change_on_invalid_value() {
         &Symbol::new(&env, "k"),
         &soroban_sdk::String::from_str(&env, ""),
     );
-    let val = client
-        .get_proposal_metadata_value(&pid, &Symbol::new(&env, "k"))
-        .unwrap();
+    let val = client.get_proposal_metadata_value(&pid, &Symbol::new(&env, "k"));
     assert_eq!(val, Some(soroban_sdk::String::from_str(&env, "original")));
 }
 
@@ -9747,7 +9745,7 @@ fn test_metadata_remove_and_readd_stays_at_max() {
             &soroban_sdk::String::from_str(&env, "v"),
         );
     }
-    assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
+    assert_eq!(client.get_proposal_metadata(&pid).len(), 16);
     client.remove_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k01"));
     assert!(client
         .try_set_proposal_metadata(
@@ -9757,5 +9755,5 @@ fn test_metadata_remove_and_readd_stays_at_max() {
             &soroban_sdk::String::from_str(&env, "v"),
         )
         .is_ok());
-    assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
+    assert_eq!(client.get_proposal_metadata(&pid).len(), 16);
 }

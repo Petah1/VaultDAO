@@ -1395,7 +1395,7 @@ pub fn get_template(env: &Env, id: u64) -> Result<ProposalTemplate, VaultError> 
     env.storage()
         .persistent()
         .get(&FeatureKey::Template(id))
-        .ok_or(VaultError::TemplateNotFound)
+        .ok_or(VaultError::ProposalNotFound)
 }
 
 /// Check if a template exists
