@@ -5,6 +5,7 @@ import FileUploader, { type UploadedAttachment } from '../FileUploader';
 import FormRenderer from '../FormRenderer';
 import VoiceToText from '../VoiceToText';
 import type { FormConfig, FormSubmissionData } from '../../types/formBuilder';
+import { logger } from '../../lib/logger';
 
 export interface NewProposalFormData {
   recipient: string;
