@@ -661,7 +661,10 @@ fn test_recurring_payment_not_due_error() {
 
     // Do NOT advance ledger — payment is not yet due
     let res = client.try_execute_recurring_payment(&payment_id);
-    assert_eq!(res.err(), Some(Ok(crate::VaultError::RecurringPaymentNotDue)));
+    assert_eq!(
+        res.err(),
+        Some(Ok(crate::VaultError::RecurringPaymentNotDue))
+    );
 }
 
 /// Test: schedule_payment returns IntervalTooShort when interval < 720.
