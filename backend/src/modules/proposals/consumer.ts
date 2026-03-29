@@ -39,6 +39,8 @@ export class ProposalActivityConsumer {
   private batchConsumers: ProposalBatchConsumer[] = [];
   private persistence: ProposalActivityPersistence | null = null;
   private isRunning: boolean = false;
+  private isFlushing: boolean = false;
+  private pendingFlush: boolean = false;
 
   constructor(options?: { batchSize?: number; flushIntervalMs?: number }) {
     this.batchSize = options?.batchSize ?? DEFAULT_BATCH_SIZE;
@@ -169,43 +171,63 @@ export class ProposalActivityConsumer {
 
   /**
    * Flushes the buffer to persistence and notifies all consumers.
+   * Concurrent calls are serialized via isFlushing/pendingFlush flags:
+   * if a flush is already in progress the caller sets pendingFlush and
+   * returns immediately; the active flush will re-run once it finishes.
    */
   public async flush(): Promise<void> {
+    if (this.isFlushing) {
+      this.pendingFlush = true;
+      return;
+    }
+
     if (this.buffer.length === 0) {
       return;
     }
 
-    const records = [...this.buffer];
-    this.buffer = [];
+    this.isFlushing = true;
 
-    console.debug("[proposal-consumer] flushing", records.length, "records");
+    try {
+      const records = [...this.buffer];
+      this.buffer = [];
 
-    // Save to persistence if configured
-    if (this.persistence) {
-      try {
-        await this.persistence.saveBatch(records);
-        console.debug(
-          "[proposal-consumer] persisted",
-          records.length,
-          "records",
-        );
-      } catch (error) {
-        console.error("[proposal-consumer] persistence error:", error);
-        // Re-add records to buffer on persistence failure
-        this.buffer.unshift(...records);
-        throw error;
+      console.debug("[proposal-consumer] flushing", records.length, "records");
+
+      // Save to persistence if configured
+      if (this.persistence) {
+        try {
+          await this.persistence.saveBatch(records);
+          console.debug(
+            "[proposal-consumer] persisted",
+            records.length,
+            "records",
+          );
+        } catch (error) {
+          console.error("[proposal-consumer] persistence error:", error);
+          // Re-add records to buffer on persistence failure
+          this.buffer.unshift(...records);
+          throw error;
+        }
       }
-    }
 
-    // Notify batch consumers
-    for (const consumer of this.batchConsumers) {
-      try {
-        await consumer(records);
-      } catch (error) {
-        console.error(
-          "[proposal-consumer] batch consumer error during flush:",
-          error,
-        );
+      // Notify batch consumers
+      for (const consumer of this.batchConsumers) {
+        try {
+          await consumer(records);
+        } catch (error) {
+          console.error(
+            "[proposal-consumer] batch consumer error during flush:",
+            error,
+          );
+        }
+      }
+    } finally {
+      this.isFlushing = false;
+
+      // If a concurrent call requested a flush while we were busy, run it now
+      if (this.pendingFlush) {
+        this.pendingFlush = false;
+        await this.flush();
       }
     }
   }
