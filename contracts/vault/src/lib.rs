@@ -1234,7 +1234,7 @@ impl VaultDAO {
         vetoer.require_auth();
 
         if !storage::is_veto_address(&env, &vetoer)? {
-            return Err(VaultError::Unauthorized);
+            return Err(VaultError::NotVetoAddress);
         }
 
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
@@ -2114,12 +2114,12 @@ impl VaultDAO {
         let mut payment = storage::get_recurring_payment(&env, payment_id)?;
 
         if !payment.is_active {
-            return Err(VaultError::ProposalNotFound); // Or specific "NotActive" error
+            return Err(VaultError::ConditionsNotMet);
         }
 
         let current_ledger = env.ledger().sequence() as u64;
         if current_ledger < payment.next_payment_ledger {
-            return Err(VaultError::TimelockNotExpired); // Reuse error for "Too Early"
+            return Err(VaultError::RecurringPaymentNotDue);
         }
 
         // Check spending limits (Daily & Weekly)
@@ -3486,7 +3486,7 @@ impl VaultDAO {
         if all_passed {
             Ok(())
         } else {
-            Err(VaultError::ProposalNotApproved) // repurpose for "conditions not met"
+            Err(VaultError::ConditionsNotMet)
         }
     }
 
@@ -3897,7 +3897,7 @@ impl VaultDAO {
 
         let mut config = storage::get_config(&env)?;
         if config.pre_execution_hooks.contains(&hook) {
-            return Err(VaultError::SignerAlreadyExists);
+            return Err(VaultError::HookAlreadyRegistered);
         }
 
         config.pre_execution_hooks.push_back(hook.clone());
@@ -3916,7 +3916,7 @@ impl VaultDAO {
 
         let mut config = storage::get_config(&env)?;
         if config.post_execution_hooks.contains(&hook) {
-            return Err(VaultError::SignerAlreadyExists);
+            return Err(VaultError::HookAlreadyRegistered);
         }
 
         config.post_execution_hooks.push_back(hook.clone());
@@ -3942,7 +3942,7 @@ impl VaultDAO {
             }
         }
 
-        let idx = found_idx.ok_or(VaultError::SignerNotFound)?;
+        let idx = found_idx.ok_or(VaultError::HookNotFound)?;
         config.pre_execution_hooks.remove(idx);
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
@@ -3966,7 +3966,7 @@ impl VaultDAO {
             }
         }
 
-        let idx = found_idx.ok_or(VaultError::SignerNotFound)?;
+        let idx = found_idx.ok_or(VaultError::HookNotFound)?;
         config.post_execution_hooks.remove(idx);
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
@@ -5291,12 +5291,12 @@ impl VaultDAO {
 
         let config = storage::get_config(&env)?;
         if !config.recovery_config.guardians.contains(&guardian) {
-            return Err(VaultError::Unauthorized);
+            return Err(VaultError::NotGuardian);
         }
 
         let mut proposal = storage::get_recovery_proposal(&env, proposal_id)?;
         if proposal.status != RecoveryStatus::Pending {
-            return Err(VaultError::ProposalNotPending);
+            return Err(VaultError::RecoveryProposalNotPending);
         }
 
         if proposal.approvals.contains(&guardian) {
@@ -5462,7 +5462,7 @@ impl VaultDAO {
         let mut proposal = storage::get_recovery_proposal(&env, proposal_id)?;
 
         if proposal.status != RecoveryStatus::Approved {
-            return Err(VaultError::ProposalNotApproved);
+            return Err(VaultError::RecoveryProposalNotPending);
         }
 
         let current_ledger = env.ledger().sequence() as u64;
@@ -5500,7 +5500,7 @@ impl VaultDAO {
         let mut proposal = storage::get_recovery_proposal(&env, proposal_id)?;
         if proposal.status != RecoveryStatus::Pending && proposal.status != RecoveryStatus::Approved
         {
-            return Err(VaultError::ProposalNotPending);
+            return Err(VaultError::RecoveryProposalNotPending);
         }
 
         proposal.status = RecoveryStatus::Cancelled;
@@ -5989,18 +5989,18 @@ impl VaultDAO {
         creator.require_auth();
 
         let config =
-            storage::get_funding_round_config(&env).ok_or(VaultError::InvalidAmount)?;
+            storage::get_funding_round_config(&env).ok_or(VaultError::FundingRoundNotConfigured)?;
 
         if !config.enabled {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingRoundNotConfigured);
         }
 
         if milestones.len() < config.min_milestones as u32 {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingMilestoneCountInvalid);
         }
 
         if milestones.len() > config.max_milestones as u32 {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingMilestoneCountInvalid);
         }
 
         // Verify proposal exists
@@ -6057,7 +6057,7 @@ impl VaultDAO {
         let mut round = storage::get_funding_round(&env, round_id)?;
 
         if round.status != FundingRoundStatus::Pending {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingRoundNotPending);
         }
 
         round.status = FundingRoundStatus::Active;
@@ -6085,17 +6085,17 @@ impl VaultDAO {
         }
 
         if round.status != FundingRoundStatus::Active {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingRoundNotActive);
         }
 
         if milestone_index >= round.milestones.len() {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingMilestoneIndexOutOfRange);
         }
 
         let milestone = &round.milestones.get(milestone_index).unwrap();
 
         if milestone.status != FundingMilestoneStatus::Pending {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingMilestoneInvalidState);
         }
 
         let mut updated_milestone = milestone.clone();
@@ -6127,17 +6127,17 @@ impl VaultDAO {
         let mut round = storage::get_funding_round(&env, round_id)?;
 
         if round.status != FundingRoundStatus::Active {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingRoundNotActive);
         }
 
         if milestone_index >= round.milestones.len() {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingMilestoneIndexOutOfRange);
         }
 
         let milestone = &round.milestones.get(milestone_index).unwrap();
 
         if milestone.status != FundingMilestoneStatus::Submitted {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingMilestoneInvalidState);
         }
 
         let mut updated_milestone = milestone.clone();
@@ -6171,17 +6171,17 @@ impl VaultDAO {
         let mut round = storage::get_funding_round(&env, round_id)?;
 
         if round.status != FundingRoundStatus::Active {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingRoundNotActive);
         }
 
         if milestone_index >= round.milestones.len() {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingMilestoneIndexOutOfRange);
         }
 
         let milestone = &round.milestones.get(milestone_index).unwrap();
 
         if milestone.status != FundingMilestoneStatus::Verified {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingMilestoneInvalidState);
         }
 
         let amount = milestone.amount;
@@ -6223,7 +6223,7 @@ impl VaultDAO {
         if round.status == FundingRoundStatus::Completed
             || round.status == FundingRoundStatus::Cancelled
         {
-            return Err(VaultError::InvalidAmount);
+            return Err(VaultError::FundingRoundFinalized);
         }
 
         round.status = FundingRoundStatus::Cancelled;

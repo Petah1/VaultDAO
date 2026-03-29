@@ -146,7 +146,7 @@ fn test_duplicate_hook() {
     client.register_pre_hook(&admin, &hook);
 
     let res = client.try_register_pre_hook(&admin, &hook);
-    assert_eq!(res.err(), Some(Ok(VaultError::SignerAlreadyExists)));
+    assert_eq!(res.err(), Some(Ok(VaultError::HookAlreadyRegistered)));
 }
 
 #[test]
@@ -381,4 +381,79 @@ fn test_failing_hook_halts_execution() {
 
     client.register_pre_hook(&admin, &hook_id);
     client.execute_proposal(&admin, &proposal_id);
+}
+
+// ============================================================================
+// Hook-specific error variant tests
+// ============================================================================
+
+#[test]
+fn test_remove_pre_hook_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let hook = Address::generate(&env);
+
+    client.initialize(&admin, &default_init_config(&env, &admin));
+
+    // Removing a hook that was never registered must return HookNotFound
+    let res = client.try_remove_pre_hook(&admin, &hook);
+    assert_eq!(res.err(), Some(Ok(VaultError::HookNotFound)));
+}
+
+#[test]
+fn test_remove_post_hook_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let hook = Address::generate(&env);
+
+    client.initialize(&admin, &default_init_config(&env, &admin));
+
+    let res = client.try_remove_post_hook(&admin, &hook);
+    assert_eq!(res.err(), Some(Ok(VaultError::HookNotFound)));
+}
+
+#[test]
+fn test_register_post_hook_duplicate() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let hook = Address::generate(&env);
+
+    client.initialize(&admin, &default_init_config(&env, &admin));
+    client.register_post_hook(&admin, &hook);
+
+    let res = client.try_register_post_hook(&admin, &hook);
+    assert_eq!(res.err(), Some(Ok(VaultError::HookAlreadyRegistered)));
+}
+
+#[test]
+fn test_register_post_hook_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let hook = Address::generate(&env);
+
+    client.initialize(&admin, &default_init_config(&env, &admin));
+
+    let res = client.try_register_post_hook(&user, &hook);
+    assert_eq!(res.err(), Some(Ok(VaultError::Unauthorized)));
 }

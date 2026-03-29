@@ -625,3 +625,69 @@ fn test_recurring_payment_multiple_executions() {
     let recipient_balance = balance_client.balance(&recipient);
     assert_eq!(recipient_balance, amount * 3);
 }
+
+// ============================================================================
+// Recurring payment – specific error variant tests
+// ============================================================================
+
+/// Test: execute_recurring_payment returns RecurringPaymentNotDue when called too early.
+#[test]
+fn test_recurring_payment_not_due_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.initialize(&admin, &default_init_config(&env, &admin));
+    client.set_role(&admin, &admin, &Role::Treasurer);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &10000);
+
+    let payment_id = client.schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &soroban_sdk::Symbol::new(&env, "recurring"),
+        &1000u64,
+    );
+
+    // Do NOT advance ledger — payment is not yet due
+    let res = client.try_execute_recurring_payment(&payment_id);
+    assert_eq!(res.err(), Some(Ok(crate::VaultError::RecurringPaymentNotDue)));
+}
+
+/// Test: schedule_payment returns IntervalTooShort when interval < 720.
+#[test]
+fn test_schedule_payment_interval_too_short() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.initialize(&admin, &default_init_config(&env, &admin));
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token_contract.address();
+
+    let res = client.try_schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100i128,
+        &soroban_sdk::Symbol::new(&env, "recurring"),
+        &100u64, // below 720 minimum
+    );
+    assert_eq!(res.err(), Some(Ok(crate::VaultError::IntervalTooShort)));
+}
