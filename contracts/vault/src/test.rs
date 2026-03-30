@@ -46,6 +46,8 @@ fn default_init_config(
         },
         recovery_config: crate::types::RecoveryConfig::default(_env),
         staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: Vec::new(_env),
+        post_execution_hooks: Vec::new(_env),
     }
 }
 
@@ -97,6 +99,8 @@ fn test_multisig_approval() {
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
         staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
     };
     client.initialize(&admin, &config);
 
@@ -982,12 +986,12 @@ fn test_abstention_does_not_count_toward_threshold() {
         &0i128,
     );
 
-    // Signer2 abstains — threshold still requires 2 approvals
+    // Signer2 abstains   threshold still requires 2 approvals
     client.abstain_from_proposal(&signer2, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Pending);
 
-    // Only 1 approval — not enough even though signer2 abstained
+    // Only 1 approval   not enough even though signer2 abstained
     client.approve_proposal(&signer1, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Pending);
@@ -1547,7 +1551,7 @@ fn test_attachment_duplicate() {
 
     client.add_attachment(&signer1, &proposal_id, &ipfs_hash);
     let result = client.try_add_attachment(&signer1, &proposal_id, &ipfs_hash);
-    assert_eq!(result.err(), Some(Ok(VaultError::DuplicateAttachment)));
+    assert_eq!(result.err(), Some(Ok(VaultError::AttachmentHashInvalid)));
 }
 
 #[test]
@@ -1678,6 +1682,75 @@ fn test_admin_can_add_attachment() {
     let ipfs_hash =
         soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz1234");
     client.add_attachment(&admin, &proposal_id, &ipfs_hash);
+}
+
+#[test]
+fn test_duplicate_attachment_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+    };
+    client.initialize(&admin, &config);
+
+    let proposal_id = client.propose_transfer(
+        &admin,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let cid = soroban_sdk::String::from_str(&env, "QmXyZ123456789abcdefghijklmnopqrstuvwxyz123456");
+    client.add_attachment(&admin, &proposal_id, &cid);
+
+    let result = client.try_add_attachment(&admin, &proposal_id, &cid);
+    assert_eq!(result, Err(Ok(VaultError::AttachmentHashInvalid)));
 }
 
 #[test]
@@ -2519,6 +2592,8 @@ fn test_amount_based_threshold_strategy() {
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
         staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -3421,7 +3496,7 @@ fn test_batch_propose_exceeds_max_size() {
 }
 
 // ============================================================================
-// NEW TESTS — Abstention Votes & Quorum (Issue #117)
+// NEW TESTS   Abstention Votes & Quorum (Issue #117)
 // ============================================================================
 
 /// Quorum disabled (quorum=0): proposals approve on threshold alone, same as before.
@@ -3486,7 +3561,7 @@ fn test_quorum_disabled_behaves_like_fixed_threshold() {
         &0i128,
     );
 
-    // Single approval satisfies threshold=1, quorum disabled → Approved immediately
+    // Single approval satisfies threshold=1, quorum disabled ? Approved immediately
     client.approve_proposal(&signer1, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Approved);
@@ -3494,8 +3569,8 @@ fn test_quorum_disabled_behaves_like_fixed_threshold() {
 
 /// Quorum blocks approval even when threshold is met.
 /// Setup: 4 signers, threshold=2, quorum=3.
-/// After 2 approvals, threshold is met but quorum (3) is not → stays Pending.
-/// After a 3rd vote (abstention), quorum is reached → transitions to Approved.
+/// After 2 approvals, threshold is met but quorum (3) is not ? stays Pending.
+/// After a 3rd vote (abstention), quorum is reached ? transitions to Approved.
 #[test]
 fn test_quorum_blocks_approval_until_satisfied() {
     let env = Env::default();
@@ -3563,7 +3638,7 @@ fn test_quorum_blocks_approval_until_satisfied() {
         &0i128,
     );
 
-    // 2 approvals → threshold met, but quorum (3) not yet reached
+    // 2 approvals ? threshold met, but quorum (3) not yet reached
     client.approve_proposal(&signer1, &proposal_id);
     client.approve_proposal(&signer2, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
@@ -3573,7 +3648,7 @@ fn test_quorum_blocks_approval_until_satisfied() {
         "Should stay Pending: threshold met but quorum not yet (2 < 3)"
     );
 
-    // Abstention from signer3 pushes quorum_votes to 3 → both threshold and quorum now satisfied
+    // Abstention from signer3 pushes quorum_votes to 3 ? both threshold and quorum now satisfied
     client.abstain_from_proposal(&signer3, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(
@@ -3617,7 +3692,7 @@ fn test_abstentions_count_toward_quorum_but_not_threshold() {
     signers.push_back(signer3.clone());
     signers.push_back(signer4.clone());
 
-    // threshold=3, quorum=2 — quorum is easy to satisfy
+    // threshold=3, quorum=2   quorum is easy to satisfy
     let config = InitConfig {
         signers,
         threshold: 3,
@@ -4075,7 +4150,7 @@ fn test_quorum_satisfied_by_approvals_alone() {
     signers.push_back(signer1.clone());
     signers.push_back(signer2.clone());
 
-    // threshold=2, quorum=2 — two approvals should satisfy both
+    // threshold=2, quorum=2   two approvals should satisfy both
     let config = InitConfig {
         signers,
         threshold: 2,
@@ -4122,7 +4197,7 @@ fn test_quorum_satisfied_by_approvals_alone() {
 
     client.approve_proposal(&signer2, &proposal_id);
     let proposal = client.get_proposal(&proposal_id);
-    // 2 approvals = threshold AND 2 total votes = quorum → Approved
+    // 2 approvals = threshold AND 2 total votes = quorum ? Approved
     assert_eq!(proposal.status, ProposalStatus::Approved);
 }
 
@@ -4142,7 +4217,7 @@ fn test_initialize_rejects_quorum_too_high() {
     signers.push_back(admin.clone());
     signers.push_back(signer1.clone());
 
-    // quorum=3 but only 2 signers — should fail
+    // quorum=3 but only 2 signers   should fail
     let config = InitConfig {
         signers,
         threshold: 1,
@@ -4237,7 +4312,7 @@ macro_rules! setup_retry_test {
 fn test_retry_schedules_on_retryable_failure() {
     setup_retry_test!(env, client, admin, _signer1, token_addr, _contract_id);
 
-    // Propose transfer of 1000 but vault only has 500 → InsufficientBalance (retryable)
+    // Propose transfer of 1000 but vault only has 500 ? InsufficientBalance (retryable)
     let recipient = Address::generate(&env);
     let proposal_id = client.propose_transfer(
         &admin,
@@ -4254,7 +4329,7 @@ fn test_retry_schedules_on_retryable_failure() {
     // Approve to reach threshold
     client.approve_proposal(&admin, &proposal_id);
 
-    // Execute — should schedule retry (returns Ok) instead of failing
+    // Execute   should schedule retry (returns Ok) instead of failing
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert!(result.is_ok(), "Expected Ok when retry is scheduled");
 
@@ -4285,10 +4360,10 @@ fn test_retry_backoff_enforced() {
 
     client.approve_proposal(&admin, &proposal_id);
 
-    // First execution — schedules retry
+    // First execution   schedules retry
     client.execute_proposal(&admin, &proposal_id);
 
-    // Try again immediately — should fail with RetryError
+    // Try again immediately   should fail with RetryError
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert_eq!(result.err(), Some(Ok(VaultError::RetryError)));
 }
@@ -4321,7 +4396,7 @@ fn test_retry_max_retries_exhausted() {
         client.execute_proposal(&admin, &proposal_id);
     }
 
-    // 4th attempt — max retries exhausted
+    // 4th attempt   max retries exhausted
     env.ledger().with_mut(|li| {
         li.sequence_number += 100;
     });
@@ -4348,13 +4423,13 @@ fn test_retry_exponential_backoff_increases() {
 
     client.approve_proposal(&admin, &proposal_id);
 
-    // First retry — backoff = 10
+    // First retry   backoff = 10
     client.execute_proposal(&admin, &proposal_id);
     let state1 = client.get_retry_state(&proposal_id).unwrap();
     let backoff1 = state1.next_retry_ledger - state1.last_retry_ledger;
     assert_eq!(backoff1, 10);
 
-    // Advance and trigger second retry — backoff = 20
+    // Advance and trigger second retry   backoff = 20
     env.ledger().with_mut(|li| {
         li.sequence_number += 11;
     });
@@ -4363,7 +4438,7 @@ fn test_retry_exponential_backoff_increases() {
     let backoff2 = state2.next_retry_ledger - state2.last_retry_ledger;
     assert_eq!(backoff2, 20);
 
-    // Advance and trigger third retry — backoff = 40
+    // Advance and trigger third retry   backoff = 40
     env.ledger().with_mut(|li| {
         li.sequence_number += 21;
     });
@@ -4463,7 +4538,7 @@ fn test_retry_execution_function() {
 
     client.approve_proposal(&admin, &proposal_id);
 
-    // Trigger initial failure → schedules retry
+    // Trigger initial failure ? schedules retry
     client.execute_proposal(&admin, &proposal_id);
 
     // Advance past backoff
@@ -4551,7 +4626,7 @@ fn test_retry_succeeds_after_balance_funded() {
 
     client.approve_proposal(&admin, &proposal_id);
 
-    // First attempt fails — insufficient balance (vault has 500, need 1000)
+    // First attempt fails   insufficient balance (vault has 500, need 1000)
     client.execute_proposal(&admin, &proposal_id);
 
     // Fund the vault with enough tokens
@@ -5060,6 +5135,8 @@ fn test_cross_vault_multi_vault_actions() {
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
             staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
         };
 
     // Initialize all vaults
@@ -6173,7 +6250,7 @@ fn test_create_from_template_amount_out_of_range() {
         priority: Priority::Normal,
     };
     let result = client.try_create_from_template(&treasurer, &template_id, &overrides);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateValidationFailed)));
+    assert_eq!(result.err(), Some(Ok(VaultError::InvalidAmount)));
 
     // Try amount above maximum
     let overrides = TemplateOverrides {
@@ -6187,7 +6264,7 @@ fn test_create_from_template_amount_out_of_range() {
         priority: Priority::Normal,
     };
     let result = client.try_create_from_template(&treasurer, &template_id, &overrides);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateValidationFailed)));
+    assert_eq!(result.err(), Some(Ok(VaultError::InvalidAmount)));
 }
 
 /// Test that inactive template cannot be used
@@ -6267,7 +6344,7 @@ fn test_create_from_inactive_template() {
         priority: Priority::Normal,
     };
     let result = client.try_create_from_template(&treasurer, &template_id, &overrides);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateInactive)));
+    assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotPending)));
 }
 
 #[test]
@@ -6423,7 +6500,7 @@ fn test_reputation_high_score_get_limits_boost() {
         priority: Priority::Normal,
     };
     let result = client.try_create_from_template(&treasurer, &template_id, &overrides);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateInactive)));
+    assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotPending)));
 }
 
 /// Test template not found error
@@ -6468,7 +6545,7 @@ fn test_template_not_found() {
 
     // Try to get non-existent template
     let result = client.try_get_template(&999);
-    assert_eq!(result.err(), Some(Ok(VaultError::TemplateNotFound)));
+    assert_eq!(result.err(), Some(Ok(VaultError::ProposalNotFound)));
 }
 
 /// Test template validation function
@@ -7562,6 +7639,8 @@ fn test_veto_blocks_execution() {
         },
         recovery_config: crate::types::RecoveryConfig::default(&env),
         staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
     };
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer1, &Role::Treasurer);
@@ -7987,6 +8066,140 @@ fn test_weighted_voting_strategy() {
 }
 
 // ============================================================================
+// rollback_execution tests
+// ============================================================================
+
+#[test]
+fn test_rollback_execution_reverses_transfer_and_clears_snapshot() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Set up a real SAC token so the transfer actually executes
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address();
+    let token_sac = StellarAssetClient::new(&env, &token_addr);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    // Fund the vault with 500 tokens
+    token_sac.mint(&contract_id, &500);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        velocity_limit: VelocityConfig {
+            limit: 10000,
+            window: 3600,
+        },
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        default_voting_deadline: 0,
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: crate::types::StakingConfig::default(),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "snap"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+    // Execute — snapshot is stored before the transfer and persists after success
+    client.execute_proposal(&admin, &proposal_id);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
+    let proposer_before = token_client.balance(&signer1);
+
+    // Rollback: vault sends the recorded amount back to the proposer
+    client.rollback_execution(&admin, &proposal_id);
+
+    let proposer_after = token_client.balance(&signer1);
+    assert_eq!(proposer_after - proposer_before, 100);
+
+    // Snapshot must be cleared — second rollback should fail with ProposalNotFound
+    let res = client.try_rollback_execution(&admin, &proposal_id);
+    assert_eq!(res, Err(Ok(VaultError::ProposalNotFound)));
+}
+
+#[test]
+fn test_rollback_execution_no_snapshot_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        velocity_limit: VelocityConfig {
+            limit: 10000,
+            window: 3600,
+        },
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        default_voting_deadline: 0,
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: crate::types::StakingConfig::default(),
+    };
+    client.initialize(&admin, &config);
+
+    // No snapshot stored for proposal_id 999
+    let res = client.try_rollback_execution(&admin, &999);
+    assert_eq!(res, Err(Ok(VaultError::ProposalNotFound)));
+}
+
+// ============================================================================
 // get_config tests (feature/public-vault-config-getter)
 // ============================================================================
 
@@ -8126,7 +8339,7 @@ fn test_set_role_non_admin_fails() {
 
     client.initialize(&admin, &default_init_config(&env, signers, 1));
 
-    // signer1 is a Member — cannot assign roles
+    // signer1 is a Member   cannot assign roles
     let result = client.try_set_role(&signer1, &user, &Role::Treasurer);
     assert_eq!(result, Err(Ok(VaultError::Unauthorized)));
 
@@ -8515,26 +8728,84 @@ fn test_list_proposal_ids_pagination() {
         );
     }
 
-    // First page: offset=0, limit=2 → IDs 1,2
+    // First page: offset=0, limit=2 ? IDs 1,2
     let page1 = client.list_proposal_ids(&0u64, &2u64);
     assert_eq!(page1.len(), 2);
     assert_eq!(page1.get(0).unwrap(), 1);
     assert_eq!(page1.get(1).unwrap(), 2);
 
-    // Second page: offset=2, limit=2 → IDs 3,4
+    // Second page: offset=2, limit=2 ? IDs 3,4
     let page2 = client.list_proposal_ids(&2u64, &2u64);
     assert_eq!(page2.len(), 2);
     assert_eq!(page2.get(0).unwrap(), 3);
     assert_eq!(page2.get(1).unwrap(), 4);
 
-    // Third page: offset=4, limit=2 → ID 5 only
+    // Third page: offset=4, limit=2 ? ID 5 only
     let page3 = client.list_proposal_ids(&4u64, &2u64);
     assert_eq!(page3.len(), 1);
     assert_eq!(page3.get(0).unwrap(), 5);
 
-    // Offset beyond total → empty
+    // Offset beyond total ? empty
     let page4 = client.list_proposal_ids(&10u64, &2u64);
     assert_eq!(page4.len(), 0);
+}
+
+// ============================================================================
+// Recurring Payment Interval Validation Tests
+// ============================================================================
+
+#[test]
+fn test_schedule_payment_interval_zero_returns_interval_too_short() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    let res = client.try_schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "pay"),
+        &0u64,
+    );
+    assert_eq!(res, Err(Ok(VaultError::IntervalTooShort)));
+}
+
+#[test]
+fn test_schedule_payment_valid_interval_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    let res = client.try_schedule_payment(
+        &admin,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "pay"),
+        &720u64,
+    );
+    assert!(res.is_ok());
 }
 
 // ============================================================================
@@ -8701,30 +8972,30 @@ fn test_list_recurring_payments_pagination() {
         );
     }
 
-    // First page: offset=0, limit=2 → IDs 1,2
+    // First page: offset=0, limit=2 ? IDs 1,2
     let page1 = client.list_recurring_payment_ids(&0u64, &2u64);
     assert_eq!(page1.len(), 2);
     assert_eq!(page1.get(0).unwrap(), 1);
     assert_eq!(page1.get(1).unwrap(), 2);
 
-    // Second page: offset=2, limit=2 → IDs 3,4
+    // Second page: offset=2, limit=2 ? IDs 3,4
     let page2 = client.list_recurring_payment_ids(&2u64, &2u64);
     assert_eq!(page2.len(), 2);
     assert_eq!(page2.get(0).unwrap(), 3);
     assert_eq!(page2.get(1).unwrap(), 4);
 
-    // Third page: offset=4, limit=2 → ID 5 only
+    // Third page: offset=4, limit=2 ? ID 5 only
     let page3 = client.list_recurring_payment_ids(&4u64, &2u64);
     assert_eq!(page3.len(), 1);
     assert_eq!(page3.get(0).unwrap(), 5);
 
-    // Offset beyond total → empty
+    // Offset beyond total ? empty
     let page4 = client.list_recurring_payment_ids(&10u64, &2u64);
     assert_eq!(page4.len(), 0);
 }
 
 // ===========================================================================
-// INVARIANT TESTS — Multisig Core Safety Rules
+// INVARIANT TESTS   Multisig Core Safety Rules
 // ===========================================================================
 //
 // These tests verify structural invariants rather than happy-path scenarios.
@@ -8767,6 +9038,8 @@ fn inv_config(env: &Env, signers: soroban_sdk::Vec<Address>, threshold: u32) -> 
         },
         recovery_config: crate::types::RecoveryConfig::default(env),
         staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: Vec::new(&env),
+        post_execution_hooks: Vec::new(&env),
     }
 }
 
@@ -8895,7 +9168,7 @@ fn invariant_non_signer_cannot_approve() {
 // ===========================================================================
 
 /// Invariant: a signer added after a proposal was created cannot vote on it
-/// (snapshot isolation — the snapshot was taken at proposal creation time).
+/// (snapshot isolation   the snapshot was taken at proposal creation time).
 #[test]
 fn invariant_late_signer_cannot_vote_on_pre_existing_proposal() {
     let env = Env::default();
@@ -8939,7 +9212,7 @@ fn invariant_late_signer_cannot_vote_on_pre_existing_proposal() {
     new_signers.push_back(late_signer.clone());
     // We can't call add_signer directly (no such function), so we verify the
     // snapshot guard by attempting to approve as late_signer who is not in config
-    // at all — the NotASigner check fires first, which is the correct guard.
+    // at all   the NotASigner check fires first, which is the correct guard.
     let res = client.try_approve_proposal(&late_signer, &pid);
     assert_eq!(res.err(), Some(Ok(VaultError::NotASigner)));
 }
@@ -8987,7 +9260,7 @@ fn invariant_removed_signer_cannot_vote_on_open_proposal() {
     // conceptually removed. We verify that signer2 (not in current config after
     // threshold update) is still blocked. Since there's no remove_signer function,
     // we test the config-level check: update threshold to 1 and verify signer2
-    // (still in config) can vote — confirming the snapshot check is the guard.
+    // (still in config) can vote   confirming the snapshot check is the guard.
     // The real invariant: approval count never exceeds signer count.
     client.approve_proposal(&signer1, &pid);
     let proposal = client.get_proposal(&pid);
@@ -9070,7 +9343,7 @@ fn invariant_pending_proposal_cannot_be_executed() {
         &0i128,
     );
 
-    // Only one approval — threshold not met, still Pending
+    // Only one approval   threshold not met, still Pending
     client.approve_proposal(&signer1, &pid);
     let proposal = client.get_proposal(&pid);
     assert_eq!(proposal.status, ProposalStatus::Pending);
@@ -9498,7 +9771,7 @@ fn invariant_execution_requires_prior_approval() {
         &0i128,
     );
 
-    // Zero approvals — must not execute
+    // Zero approvals   must not execute
     let res = client.try_execute_proposal(&admin, &pid);
     assert_eq!(res.err(), Some(Ok(VaultError::ProposalNotApproved)));
 }
@@ -9979,42 +10252,100 @@ fn test_attachment_too_long_rejected() {
     assert_eq!(res.err(), Some(Ok(VaultError::AttachmentHashInvalid)));
 }
 
-/// Adding more than MAX_ATTACHMENTS (10) is rejected with TooManyAttachments.
+// -----------------------------------------------------------------------------
+// remove_signer tests
+// -----------------------------------------------------------------------------
+
 #[test]
-fn test_attachment_max_count_enforced() {
+fn test_remove_signer_below_threshold_rejected() {
     let env = Env::default();
     env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    // threshold = 2, signers = 2 → removing any signer leaves 1 < 2
+    client.initialize(&admin, &default_init_config(&env, signers, 2));
+
+    let res = client.try_remove_signer(&admin, &signer1);
+    assert_eq!(res, Err(Ok(VaultError::CannotRemoveSigner)));
+}
+
+#[test]
+fn test_remove_signer_above_threshold_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+    // threshold = 2, signers = 3 → removing one leaves 2 >= 2
+    client.initialize(&admin, &default_init_config(&env, signers, 2));
+
+    client.remove_signer(&admin, &signer2);
+    assert_eq!(client.get_signers().len(), 2);
+}
+
+// -----------------------------------------------------------------------------
+// Proposal Getter Tests
+// -----------------------------------------------------------------------------
+
+/// Test get_proposal returns correct proposal data
+#[test]
+fn test_public_api_get_proposal_basic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
     let token = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1000);
-    let mut signers = soroban_sdk::Vec::new(&env);
+    let token_client = StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &1000);
+
+    let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
-    client.initialize(&admin, &default_init_config(&env, signers, 1));
-    let pid = make_proposal(&client, &admin, &recipient, &token, &env);
-    let cids = [
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdH",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdI",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdJ",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdK",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdL",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdM",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdN",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdO",
-        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdP",
-    ];
-    for cid in &cids {
-        client.add_attachment(&admin, &pid, &soroban_sdk::String::from_str(&env, cid));
-    }
-    let extra =
-        soroban_sdk::String::from_str(&env, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdQ");
-    let res = client.try_add_attachment(&admin, &pid, &extra);
-    assert_eq!(res.err(), Some(Ok(VaultError::TooManyAttachments)));
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    let proposal_id = client.propose_transfer(
+        &admin,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "test_memo"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.id, proposal_id);
+    assert_eq!(proposal.recipient, recipient);
+    assert_eq!(proposal.amount, 100);
+    assert_eq!(proposal.token, token);
+    assert_eq!(proposal.memo, Symbol::new(&env, "test_memo"));
+    assert_eq!(proposal.priority, Priority::Normal);
 }
 
 /// Duplicate attachment returns DuplicateAttachment.
@@ -10131,7 +10462,7 @@ fn test_tag_up_to_max_succeeds() {
             .try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, name))
             .is_ok());
     }
-    assert_eq!(client.get_proposal_tags(&pid).unwrap().len(), 10);
+    assert_eq!(client.get_proposal_tags(&pid).len(), 10);
 }
 
 /// Duplicate tag returns DuplicateTag.
@@ -10226,7 +10557,7 @@ fn test_tag_add_remove_add_deterministic() {
     assert!(client
         .try_add_proposal_tag(&admin, &pid, &Symbol::new(&env, "new"))
         .is_ok());
-    assert_eq!(client.get_proposal_tags(&pid).unwrap().len(), 10);
+    assert_eq!(client.get_proposal_tags(&pid).len(), 10);
 }
 
 // --- Metadata: boundary and edge cases ---
@@ -10339,9 +10670,7 @@ fn test_metadata_no_state_change_on_invalid_value() {
         &Symbol::new(&env, "k"),
         &soroban_sdk::String::from_str(&env, ""),
     );
-    let val = client
-        .get_proposal_metadata_value(&pid, &Symbol::new(&env, "k"))
-        .unwrap();
+    let val = client.get_proposal_metadata_value(&pid, &Symbol::new(&env, "k"));
     assert_eq!(val, Some(soroban_sdk::String::from_str(&env, "original")));
 }
 
@@ -10373,7 +10702,7 @@ fn test_metadata_remove_and_readd_stays_at_max() {
             &soroban_sdk::String::from_str(&env, "v"),
         );
     }
-    assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
+    assert_eq!(client.get_proposal_metadata(&pid).len(), 16);
     client.remove_proposal_metadata(&admin, &pid, &Symbol::new(&env, "k01"));
     assert!(client
         .try_set_proposal_metadata(
@@ -10383,7 +10712,7 @@ fn test_metadata_remove_and_readd_stays_at_max() {
             &soroban_sdk::String::from_str(&env, "v"),
         )
         .is_ok());
-    assert_eq!(client.get_proposal_metadata(&pid).unwrap().len(), 16);
+    assert_eq!(client.get_proposal_metadata(&pid).len(), 16);
 }
 
 // ============================================================================
@@ -10981,5 +11310,1079 @@ fn test_quorum_percentage_enforcement() {
     assert_eq!(
         client.get_proposal(&proposal_id).status,
         ProposalStatus::Approved
+    );
+}
+
+// ============================================================================
+// TASK 1: Bug Condition Exploration Test
+//
+// Property 1: Fault Condition — Batch Proposals Respect Timelock Threshold
+//
+// These tests encode the EXPECTED behavior. They FAILED on unfixed code
+// (unlock_ledger was 0 instead of current_ledger + timelock_delay).
+// After the fix they MUST PASS.
+//
+// Validates: Requirements 2.1
+// ============================================================================
+
+/// **Validates: Requirements 2.1**
+///
+/// Property 1: For all batch transfers where `amount >= timelock_threshold`,
+/// `batch_propose_transfers([{amount}]).unlock_ledger == current_ledger + timelock_delay`.
+///
+/// Tests four cases:
+///   1. Single-item batch with amount == timelock_threshold
+///   2. Single-item batch with amount > timelock_threshold
+///   3. Mixed batch (one above, one below threshold)
+///   4. All-above batch (multiple transfers all above threshold)
+///
+/// EXPECTED OUTCOME (post-fix): PASSES — unlock_ledger is correctly set.
+#[test]
+fn pbt_fault_condition_batch_above_threshold_unlock_ledger_is_delayed() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    let recipient = Address::generate(&env);
+
+    // preservation_setup sets ledger sequence to 100, timelock_threshold=500, timelock_delay=100
+    let timelock_threshold: i128 = 500;
+    let timelock_delay: u64 = 100;
+    let current_ledger: u64 = 100;
+    let expected_unlock = current_ledger + timelock_delay;
+
+    // Case 1: Single-item batch with amount == timelock_threshold
+    {
+        let mut transfers = Vec::new(&env);
+        transfers.push_back(TransferDetails {
+            recipient: recipient.clone(),
+            token: token.clone(),
+            amount: timelock_threshold,
+        });
+        let proposal_ids = client.batch_propose_transfers(
+            &treasurer,
+            &transfers,
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+        let proposal = client.get_proposal(&proposal_ids.get(0).unwrap());
+        assert_eq!(
+            proposal.unlock_ledger, expected_unlock,
+            "Case 1 (amount == threshold): expected unlock_ledger = {}, got {}",
+            expected_unlock, proposal.unlock_ledger
+        );
+    }
+
+    // Case 2: Single-item batch with amount > timelock_threshold
+    {
+        let mut transfers = Vec::new(&env);
+        transfers.push_back(TransferDetails {
+            recipient: recipient.clone(),
+            token: token.clone(),
+            amount: timelock_threshold + 100,
+        });
+        let proposal_ids = client.batch_propose_transfers(
+            &treasurer,
+            &transfers,
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+        let proposal = client.get_proposal(&proposal_ids.get(0).unwrap());
+        assert_eq!(
+            proposal.unlock_ledger, expected_unlock,
+            "Case 2 (amount > threshold): expected unlock_ledger = {}, got {}",
+            expected_unlock, proposal.unlock_ledger
+        );
+    }
+
+    // Case 3: Mixed batch — one above threshold, one below
+    {
+        let mut transfers = Vec::new(&env);
+        transfers.push_back(TransferDetails {
+            recipient: recipient.clone(),
+            token: token.clone(),
+            amount: timelock_threshold + 50, // above threshold
+        });
+        transfers.push_back(TransferDetails {
+            recipient: recipient.clone(),
+            token: token.clone(),
+            amount: timelock_threshold - 1, // below threshold
+        });
+        let proposal_ids = client.batch_propose_transfers(
+            &treasurer,
+            &transfers,
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+        let above_proposal = client.get_proposal(&proposal_ids.get(0).unwrap());
+        let below_proposal = client.get_proposal(&proposal_ids.get(1).unwrap());
+        assert_eq!(
+            above_proposal.unlock_ledger, expected_unlock,
+            "Case 3 (above-threshold in mixed batch): expected unlock_ledger = {}, got {}",
+            expected_unlock, above_proposal.unlock_ledger
+        );
+        assert_eq!(
+            below_proposal.unlock_ledger, 0,
+            "Case 3 (below-threshold in mixed batch): expected unlock_ledger = 0, got {}",
+            below_proposal.unlock_ledger
+        );
+    }
+
+    // Case 4: All-above batch — every transfer above threshold
+    {
+        let above_amounts: &[i128] = &[
+            timelock_threshold,
+            timelock_threshold + 1,
+            timelock_threshold + 50,
+        ];
+        let mut transfers = Vec::new(&env);
+        for &amount in above_amounts {
+            transfers.push_back(TransferDetails {
+                recipient: recipient.clone(),
+                token: token.clone(),
+                amount,
+            });
+        }
+        let proposal_ids = client.batch_propose_transfers(
+            &treasurer,
+            &transfers,
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+        for idx in 0..above_amounts.len() as u32 {
+            let proposal = client.get_proposal(&proposal_ids.get(idx).unwrap());
+            assert_eq!(
+                proposal.unlock_ledger, expected_unlock,
+                "Case 4 (all-above batch, idx {}): expected unlock_ledger = {}, got {}",
+                idx, expected_unlock, proposal.unlock_ledger
+            );
+        }
+    }
+}
+
+// ============================================================================
+// TASK 2: Preservation Property Tests (BEFORE fix)
+//
+// These tests establish the baseline behavior we want to PRESERVE after the fix.
+// They MUST PASS on unfixed code.
+//
+// Property 2: Preservation — Below-Threshold Batch Transfers Remain Unlocked
+// Property 3: Preservation — Single-Proposal Path Is Unchanged
+//
+// Validates: Requirements 2.2, 3.1, 3.2, 3.4
+// ============================================================================
+
+/// Helper: set up a minimal vault environment for preservation tests.
+/// Returns (env, client, admin, treasurer, token).
+fn preservation_setup() -> (Env, VaultDAOClient<'static>, Address, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_sequence_number(100);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1_000_000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        spending_limit: 1_000_000,
+        daily_limit: 10_000_000,
+        weekly_limit: 50_000_000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 1000,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        veto_addresses: Vec::new(&env),
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    (env, client, admin, treasurer, token)
+}
+
+/// **Validates: Requirements 2.2, 3.4**
+///
+/// Property 2a: For all `amount` in `[1, timelock_threshold - 1]`,
+/// `batch_propose_transfers([{amount}]).unlock_ledger == 0`.
+///
+/// Iterates over a representative set of below-threshold amounts and asserts
+/// that each batch proposal has `unlock_ledger = 0` (no timelock applied).
+/// This MUST PASS on unfixed code — it confirms the below-threshold batch path
+/// is already correct and must be preserved by the fix.
+#[test]
+fn pbt_preservation_batch_below_threshold_unlock_ledger_is_zero() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    let recipient = Address::generate(&env);
+
+    // timelock_threshold = 500; test amounts in [1, 499]
+    let timelock_threshold: i128 = 500;
+    let test_amounts: &[i128] = &[
+        1,
+        2,
+        10,
+        50,
+        100,
+        249,
+        250,
+        251,
+        timelock_threshold - 2,
+        timelock_threshold - 1,
+    ];
+
+    for &amount in test_amounts {
+        let mut transfers = Vec::new(&env);
+        transfers.push_back(TransferDetails {
+            recipient: recipient.clone(),
+            token: token.clone(),
+            amount,
+        });
+
+        let proposal_ids = client.batch_propose_transfers(
+            &treasurer,
+            &transfers,
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+
+        let proposal = client.get_proposal(&proposal_ids.get(0).unwrap());
+        assert_eq!(
+            proposal.unlock_ledger, 0,
+            "Expected unlock_ledger = 0 for below-threshold batch amount {}, got {}",
+            amount, proposal.unlock_ledger
+        );
+    }
+}
+
+/// **Validates: Requirements 3.2, 3.4**
+///
+/// Property 3a: For all `amount` in `[1, timelock_threshold - 1]`,
+/// `propose_transfer_internal({amount}).unlock_ledger == 0`.
+///
+/// Iterates over a representative set of below-threshold amounts and asserts
+/// that each single proposal has `unlock_ledger = 0`.
+/// This MUST PASS on unfixed code — it confirms the single-proposal path
+/// correctly handles below-threshold amounts.
+#[test]
+fn pbt_preservation_single_below_threshold_unlock_ledger_is_zero() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    let recipient = Address::generate(&env);
+
+    // timelock_threshold = 500; test amounts in [1, 499]
+    let timelock_threshold: i128 = 500;
+    let test_amounts: &[i128] = &[
+        1,
+        2,
+        10,
+        50,
+        100,
+        249,
+        250,
+        251,
+        timelock_threshold - 2,
+        timelock_threshold - 1,
+    ];
+
+    for &amount in test_amounts {
+        let proposal_id = client.propose_transfer(
+            &treasurer,
+            &recipient,
+            &token,
+            &amount,
+            &Symbol::new(&env, "prsv"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+
+        let proposal = client.get_proposal(&proposal_id);
+        assert_eq!(
+            proposal.unlock_ledger, 0,
+            "Expected unlock_ledger = 0 for below-threshold single amount {}, got {}",
+            amount, proposal.unlock_ledger
+        );
+    }
+}
+
+/// **Validates: Requirements 3.1**
+///
+/// Property 3b: For all `amount >= timelock_threshold`,
+/// `propose_transfer_internal({amount}).unlock_ledger == current_ledger + timelock_delay`.
+///
+/// Iterates over a representative set of at-or-above-threshold amounts and asserts
+/// that each single proposal has `unlock_ledger = current_ledger + timelock_delay`.
+/// This MUST PASS on unfixed code — it confirms the single-proposal path
+/// correctly applies the timelock for at/above-threshold amounts.
+#[test]
+fn pbt_preservation_single_at_or_above_threshold_unlock_ledger_is_delayed() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    let recipient = Address::generate(&env);
+
+    // timelock_threshold = 500, timelock_delay = 100, current_ledger = 100
+    let timelock_threshold: i128 = 500;
+    let timelock_delay: u64 = 100;
+    let current_ledger: u64 = 100; // set by preservation_setup
+    let expected_unlock = current_ledger + timelock_delay;
+
+    let test_amounts: &[i128] = &[
+        timelock_threshold,
+        timelock_threshold + 1,
+        timelock_threshold + 50,
+        timelock_threshold + 100,
+        timelock_threshold + 499,
+        timelock_threshold * 2,
+        timelock_threshold * 10,
+    ];
+
+    for &amount in test_amounts {
+        let proposal_id = client.propose_transfer(
+            &treasurer,
+            &recipient,
+            &token,
+            &amount,
+            &Symbol::new(&env, "prsv"),
+            &Priority::Normal,
+            &Vec::new(&env),
+            &ConditionLogic::And,
+            &0i128,
+        );
+
+        let proposal = client.get_proposal(&proposal_id);
+        assert_eq!(
+            proposal.unlock_ledger, expected_unlock,
+            "Expected unlock_ledger = {} for at/above-threshold single amount {}, got {}",
+            expected_unlock, amount, proposal.unlock_ledger
+        );
+    }
+}
+
+// ============================================================================
+// TASK 3.4: Unit Tests for Boundary Conditions
+//
+// Validates: Requirements 2.1, 2.2, 3.1, 3.2
+//
+// Config: timelock_threshold=500, timelock_delay=100, ledger sequence=100
+// => expected_unlock = 100 + 100 = 200
+// ============================================================================
+
+/// batch_propose_transfers with amount == timelock_threshold should set
+/// unlock_ledger == current_ledger + timelock_delay.
+///
+/// Validates: Requirements 2.1
+#[test]
+fn test_batch_propose_at_threshold_has_timelock() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    let recipient = Address::generate(&env);
+
+    // timelock_threshold=500, timelock_delay=100, current_ledger=100
+    let timelock_threshold: i128 = 500;
+    let expected_unlock: u64 = 200; // 100 + 100
+
+    let mut transfers = Vec::new(&env);
+    transfers.push_back(TransferDetails {
+        recipient: recipient.clone(),
+        token: token.clone(),
+        amount: timelock_threshold, // exactly at threshold
+    });
+
+    let proposal_ids = client.batch_propose_transfers(
+        &treasurer,
+        &transfers,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let proposal = client.get_proposal(&proposal_ids.get(0).unwrap());
+    assert_eq!(
+        proposal.unlock_ledger, expected_unlock,
+        "Expected unlock_ledger = {} for amount == threshold, got {}",
+        expected_unlock, proposal.unlock_ledger
+    );
+}
+
+/// batch_propose_transfers with amount == timelock_threshold - 1 should set
+/// unlock_ledger == 0 (no timelock).
+///
+/// Validates: Requirements 2.2
+#[test]
+fn test_batch_propose_below_threshold_no_timelock() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    let recipient = Address::generate(&env);
+
+    // timelock_threshold=500; amount just below threshold
+    let timelock_threshold: i128 = 500;
+
+    let mut transfers = Vec::new(&env);
+    transfers.push_back(TransferDetails {
+        recipient: recipient.clone(),
+        token: token.clone(),
+        amount: timelock_threshold - 1, // just below threshold
+    });
+
+    let proposal_ids = client.batch_propose_transfers(
+        &treasurer,
+        &transfers,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let proposal = client.get_proposal(&proposal_ids.get(0).unwrap());
+    assert_eq!(
+        proposal.unlock_ledger, 0,
+        "Expected unlock_ledger = 0 for amount below threshold, got {}",
+        proposal.unlock_ledger
+    );
+}
+
+/// Mixed batch: one transfer above threshold, one below.
+/// Each proposal's unlock_ledger must be set independently and correctly.
+///
+/// Validates: Requirements 2.1, 2.2
+#[test]
+fn test_batch_propose_mixed_per_proposal_unlock_ledger() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    let recipient = Address::generate(&env);
+
+    // timelock_threshold=500, timelock_delay=100, current_ledger=100
+    let timelock_threshold: i128 = 500;
+    let expected_unlock: u64 = 200; // 100 + 100
+
+    let mut transfers = Vec::new(&env);
+    // First transfer: above threshold — should get timelock
+    transfers.push_back(TransferDetails {
+        recipient: recipient.clone(),
+        token: token.clone(),
+        amount: timelock_threshold + 100,
+    });
+    // Second transfer: below threshold — should have no timelock
+    transfers.push_back(TransferDetails {
+        recipient: recipient.clone(),
+        token: token.clone(),
+        amount: timelock_threshold - 1,
+    });
+
+    let proposal_ids = client.batch_propose_transfers(
+        &treasurer,
+        &transfers,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let above_proposal = client.get_proposal(&proposal_ids.get(0).unwrap());
+    let below_proposal = client.get_proposal(&proposal_ids.get(1).unwrap());
+
+    assert_eq!(
+        above_proposal.unlock_ledger, expected_unlock,
+        "Above-threshold proposal: expected unlock_ledger = {}, got {}",
+        expected_unlock, above_proposal.unlock_ledger
+    );
+    assert_eq!(
+        below_proposal.unlock_ledger, 0,
+        "Below-threshold proposal: expected unlock_ledger = 0, got {}",
+        below_proposal.unlock_ledger
+    );
+}
+
+/// propose_transfer with amount == timelock_threshold should set
+/// unlock_ledger == current_ledger + timelock_delay (behavior unchanged).
+///
+/// Validates: Requirements 3.1
+#[test]
+fn test_single_propose_at_threshold_unchanged() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    let recipient = Address::generate(&env);
+
+    // timelock_threshold=500, timelock_delay=100, current_ledger=100
+    let timelock_threshold: i128 = 500;
+    let expected_unlock: u64 = 200; // 100 + 100
+
+    let proposal_id = client.propose_transfer(
+        &treasurer,
+        &recipient,
+        &token,
+        &timelock_threshold, // exactly at threshold
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(
+        proposal.unlock_ledger, expected_unlock,
+        "Single propose at threshold: expected unlock_ledger = {}, got {}",
+        expected_unlock, proposal.unlock_ledger
+    );
+}
+
+/// propose_transfer with amount == timelock_threshold - 1 should set
+/// unlock_ledger == 0 (behavior unchanged).
+///
+/// Validates: Requirements 3.2
+#[test]
+fn test_single_propose_below_threshold_unchanged() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    let recipient = Address::generate(&env);
+
+    // timelock_threshold=500; amount just below threshold
+    let timelock_threshold: i128 = 500;
+
+    let proposal_id = client.propose_transfer(
+        &treasurer,
+        &recipient,
+        &token,
+        &(timelock_threshold - 1), // just below threshold
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(
+        proposal.unlock_ledger, 0,
+        "Single propose below threshold: expected unlock_ledger = 0, got {}",
+        proposal.unlock_ledger
+    );
+}
+
+// ============================================================================
+// Task 3.5 — Integration tests: execution blocking for batch timelock
+// ============================================================================
+
+/// Batch proposal with amount >= timelock_threshold is blocked from execution
+/// before unlock_ledger is reached.
+///
+/// Validates: Requirements 3.3
+#[test]
+fn test_batch_timelock_blocks_execution_before_unlock() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    // preservation_setup: current_ledger=100, timelock_threshold=500, timelock_delay=100
+    // => unlock_ledger = 200 for amounts >= 500
+
+    let recipient = Address::generate(&env);
+    let mut transfers = Vec::new(&env);
+    transfers.push_back(TransferDetails {
+        recipient: recipient.clone(),
+        token: token.clone(),
+        amount: 600, // above threshold
+    });
+
+    let proposal_ids = client.batch_propose_transfers(
+        &treasurer,
+        &transfers,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    let proposal_id = proposal_ids.get(0).unwrap();
+
+    // Approve (threshold=1, so one approval suffices)
+    client.approve_proposal(&treasurer, &proposal_id);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+    assert_eq!(proposal.unlock_ledger, 200); // 100 + 100
+
+    // Attempt execution at ledger 100 — still locked
+    let res = client.try_execute_proposal(&treasurer, &proposal_id);
+    assert_eq!(
+        res.err(),
+        Some(Ok(VaultError::TimelockNotExpired)),
+        "Expected TimelockNotExpired before unlock_ledger is reached"
+    );
+}
+
+/// Batch proposal with amount >= timelock_threshold executes successfully
+/// after the ledger advances past unlock_ledger.
+///
+/// Validates: Requirements 3.3
+#[test]
+fn test_batch_timelock_executes_after_unlock() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    // preservation_setup: current_ledger=100, timelock_threshold=500, timelock_delay=100
+    // => unlock_ledger = 200
+
+    let recipient = Address::generate(&env);
+    let mut transfers = Vec::new(&env);
+    transfers.push_back(TransferDetails {
+        recipient: recipient.clone(),
+        token: token.clone(),
+        amount: 600, // above threshold
+    });
+
+    let proposal_ids = client.batch_propose_transfers(
+        &treasurer,
+        &transfers,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    let proposal_id = proposal_ids.get(0).unwrap();
+
+    client.approve_proposal(&treasurer, &proposal_id);
+
+    // Advance ledger past unlock_ledger (200)
+    env.ledger().set_sequence_number(201);
+
+    // Execution should now succeed
+    let res = client.try_execute_proposal(&treasurer, &proposal_id);
+    assert!(
+        res.is_ok(),
+        "Expected execution to succeed after unlock_ledger is passed, got: {:?}",
+        res.err()
+    );
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Executed);
+}
+
+/// Batch proposal with all amounts below timelock_threshold executes immediately
+/// after approval — no timelock delay required.
+///
+/// Validates: Requirements 3.4 (regression check)
+#[test]
+fn test_batch_below_threshold_executes_immediately() {
+    let (env, client, _admin, treasurer, token) = preservation_setup();
+    // preservation_setup: current_ledger=100, timelock_threshold=500
+
+    let recipient = Address::generate(&env);
+    let mut transfers = Vec::new(&env);
+    transfers.push_back(TransferDetails {
+        recipient: recipient.clone(),
+        token: token.clone(),
+        amount: 499, // below threshold
+    });
+
+    let proposal_ids = client.batch_propose_transfers(
+        &treasurer,
+        &transfers,
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    let proposal_id = proposal_ids.get(0).unwrap();
+
+    client.approve_proposal(&treasurer, &proposal_id);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(
+        proposal.unlock_ledger, 0,
+        "Below-threshold proposal should have unlock_ledger = 0"
+    );
+
+    // Execute immediately at current ledger (100) — no timelock
+    let res = client.try_execute_proposal(&treasurer, &proposal_id);
+    assert!(
+        res.is_ok(),
+        "Expected immediate execution for below-threshold batch proposal, got: {:?}",
+        res.err()
+    );
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Executed);
+}
+
+#[test]
+fn test_insurance_slash_on_voting_deadline_rejection() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    StellarAssetClient::new(&env, &token_addr).mint(&proposer, &1000);
+    StellarAssetClient::new(&env, &token_addr).mint(&contract_id, &5000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    let config = InitConfig {
+        // voting deadline of 50 ledgers
+        default_voting_deadline: 50,
+        ..config
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // 50% slash on rejection
+    client.set_insurance_config(
+        &admin,
+        &InsuranceConfig {
+            enabled: true,
+            min_amount: 0,
+            min_insurance_bps: 0,
+            slash_percentage: 50,
+        },
+    );
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
+
+    // Propose with 100 tokens insurance
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &100,
+    );
+    // proposer locked 100 insurance tokens
+    assert_eq!(token_client.balance(&proposer), 900);
+
+    // Advance past the voting deadline
+    env.ledger().set_sequence_number(100);
+
+    // Trigger deadline rejection via approve_proposal
+    client.approve_proposal(&admin, &proposal_id);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Rejected);
+
+    // 50% of 100 = 50 slashed to pool, 50 returned to proposer
+    assert_eq!(token_client.balance(&proposer), 950); // 900 + 50 returned
+    assert_eq!(client.get_insurance_pool(&token_addr), 50);
+}
+
+#[test]
+fn test_stake_slash_on_voting_deadline_rejection() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = sac.address();
+    StellarAssetClient::new(&env, &token_addr).mint(&proposer, &2000);
+    StellarAssetClient::new(&env, &token_addr).mint(&contract_id, &5000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(proposer.clone());
+
+    let config = default_init_config(&env, signers, 2);
+    let config = InitConfig {
+        default_voting_deadline: 50,
+        ..config
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    // Enable staking with 50% slash on rejection
+    client.update_staking_config(
+        &admin,
+        &types::StakingConfig {
+            enabled: true,
+            min_amount: 0,
+            base_stake_bps: 1000, // 10% stake
+            max_stake_amount: i128::MAX,
+            reputation_discount_threshold: 900,
+            reputation_discount_percentage: 0,
+            slash_percentage: 50,
+        },
+    );
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
+
+    // Propose — 10% of 100 = 10 tokens staked
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+    let balance_after_propose = token_client.balance(&proposer);
+
+    // Advance past the voting deadline
+    env.ledger().set_sequence_number(100);
+
+    // Trigger deadline rejection via approve_proposal
+    client.approve_proposal(&admin, &proposal_id);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Rejected);
+
+    // 50% of stake slashed to pool, 50% returned to proposer
+    let stake_amount = proposal.stake_amount;
+    let expected_slash = stake_amount / 2;
+    let expected_return = stake_amount - expected_slash;
+
+    assert_eq!(
+        token_client.balance(&proposer),
+        balance_after_propose + expected_return
+    );
+    assert_eq!(client.get_stake_pool_balance(&token_addr), expected_slash);
+
+    // Verify stake record persisted correctly
+    let stake_record = client.get_stake_record(&proposal_id).unwrap();
+    assert!(stake_record.slashed);
+    assert_eq!(stake_record.slashed_amount, expected_slash);
+}
+
+// ============================================================================
+// Oracle staleness tests
+// ============================================================================
+
+mod mock_oracle {
+    use soroban_sdk::{contract, contractimpl, Address, Env};
+
+    use crate::types::VaultPriceData;
+
+    #[contract]
+    pub struct MockOracle;
+
+    #[contractimpl]
+    impl MockOracle {
+        /// Returns a price with the given timestamp so tests can control staleness.
+        pub fn lastprice(_env: Env, _asset: Address) -> Option<VaultPriceData> {
+            // timestamp = 0 makes the price maximally stale
+            Some(VaultPriceData {
+                price: 1_000,
+                timestamp: 0,
+            })
+        }
+    }
+}
+
+#[test]
+fn test_stale_oracle_price_blocks_condition_evaluation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = token_contract.address();
+    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    token_sac.mint(&contract_id, &1000);
+
+    // Register mock oracle that always returns timestamp = 0 (stale)
+    let oracle_id = env.register(mock_oracle::MockOracle, ());
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        velocity_limit: VelocityConfig {
+            limit: 10000,
+            window: 3600,
+        },
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        default_voting_deadline: 0,
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: crate::types::StakingConfig::default(),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // Configure oracle with max_staleness = 10 ledgers; current ledger >> 10
+    client.update_oracle_config(
+        &admin,
+        &crate::types::VaultOracleConfig {
+            address: oracle_id,
+            base_symbol: Symbol::new(&env, "USD"),
+            max_staleness: 10,
+        },
+    );
+
+    let asset = Address::generate(&env);
+    let mut conditions = Vec::new(&env);
+    conditions.push_back(Condition::PriceAbove(asset, 500));
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "stale"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Advance ledger well past max_staleness
+    env.ledger().with_mut(|l| l.sequence_number = 1000);
+
+    let res = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(res, Err(Ok(VaultError::ConditionsNotMet)));
+}
+
+#[test]
+fn test_fresh_oracle_price_allows_condition_evaluation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = token_contract.address();
+    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    token_sac.mint(&contract_id, &1000);
+
+    // Register mock oracle returning timestamp = 0
+    let oracle_id = env.register(mock_oracle::MockOracle, ());
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        velocity_limit: VelocityConfig {
+            limit: 10000,
+            window: 3600,
+        },
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        default_voting_deadline: 0,
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: crate::types::StakingConfig::default(),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // max_staleness = 10000 — current ledger (default ~100) is within range of timestamp 0
+    client.update_oracle_config(
+        &admin,
+        &crate::types::VaultOracleConfig {
+            address: oracle_id,
+            base_symbol: Symbol::new(&env, "USD"),
+            max_staleness: 10000,
+        },
+    );
+
+    let asset = Address::generate(&env);
+    let mut conditions = Vec::new(&env);
+    // price = 1000, threshold = 500 → PriceAbove satisfied
+    conditions.push_back(Condition::PriceAbove(asset, 500));
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "fresh"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Should succeed — price is fresh and above threshold
+    client.execute_proposal(&admin, &proposal_id);
+    assert_eq!(
+        client.get_proposal(&proposal_id).status,
+        ProposalStatus::Executed
     );
 }

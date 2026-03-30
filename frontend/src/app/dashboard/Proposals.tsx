@@ -10,6 +10,7 @@ import ConfirmationModal from '../../components/modals/ConfirmationModal';
 import ProposalFilters, { type FilterState } from '../../components/proposals/ProposalFilters';
 import ProposalComparison from '../../components/ProposalComparison';
 import { useToast } from '../../hooks/useToast';
+import { logger } from '@/lib/logger';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useProposals } from '../../hooks/useProposals';
 import { useWallet } from '../../hooks/useWallet';
